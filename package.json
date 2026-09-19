@@ -1,0 +1,30 @@
+{
+  "name": "@orientpine/omo-usage",
+  "version": "0.1.0",
+  "description": "omo-ai(senpi)에 로그인된 모든 계정의 잔여 사용량을 한 화면에 보여주는 TUI",
+  "license": "MIT",
+  "author": "orientpine",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/orientpine/omo-usage.git"
+  },
+  "homepage": "https://github.com/orientpine/omo-usage#readme",
+  "bugs": "https://github.com/orientpine/omo-usage/issues",
+  "keywords": ["omo", "senpi", "claude", "codex", "grok", "usage", "rate-limit", "tui", "bun"],
+  "type": "module",
+  "bin": {
+    "omo-usage": "./bin/omo-usage.ts"
+  },
+  "files": ["bin", "src", "README.md"],
+  "engines": {
+    "bun": ">=1.2"
+  },
+  "scripts": {
+    "start": "bun run src/main.ts",
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2"
+  }
+}
