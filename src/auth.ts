@@ -90,6 +90,7 @@ export function buildRoster(auth: unknown, now: number): AccountRow[] {
 				plan: null,
 				expiresAt,
 				windows: [],
+				...(text(entry["pinned"]) === slot ? { pinned: true as const } : {}),
 			});
 		}
 	}

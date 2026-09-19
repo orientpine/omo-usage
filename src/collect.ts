@@ -2,6 +2,7 @@ import type { AccountRow } from "./types.ts";
 import { buildRoster, USAGE_PROVIDERS, type UsageKind } from "./auth.ts";
 import { accountKey, secretsFrom, type Secret } from "./credentials.ts";
 import { parseClaudeUsage, parseCodexUsage, parseXaiUsage } from "./parse.ts";
+import { stampLastUsed } from "./pool.ts";
 
 const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const CLAUDE_OAUTH_BETA = "oauth-2025-04-20";
@@ -18,6 +19,8 @@ export interface CollectOptions {
 	readonly signal?: AbortSignal;
 	/** 직전 결과. 429면 이전 막대를 유지하고, retryAt 전인 계정은 호출하지 않는다. */
 	readonly previous?: readonly AccountRow[];
+	/** senpi의 credential-pool-state.json 내용. 어느 계정이 실제로 차감되는지는 여기에만 있다. */
+	readonly poolState?: unknown;
 }
 
 function timeoutSignal(outer: AbortSignal | undefined): AbortSignal {
@@ -116,16 +119,15 @@ export async function collectUsage(auth: unknown, options: CollectOptions = {}):
 	const rows = buildRoster(auth, now);
 	const secrets = secretsFrom(auth);
 	const previous = new Map((options.previous ?? []).map((row) => [accountKey(row.provider, row.slot), row]));
+	const resolve = async (row: AccountRow): Promise<AccountRow> => {
+		if (row.status !== "loading") return row;
+		const key = accountKey(row.provider, row.slot);
+		const prev = previous.get(key);
+		if (prev?.retryAt !== undefined && prev.retryAt > now) return prev;
+		const secret = secrets.get(key);
+		if (!secret) return { ...row, status: "error" as const, detail: "액세스 토큰 없음" };
+		return fetchOne(row, secret, { ...options, now }, prev);
+	};
 
-	return Promise.all(
-		rows.map(async (row) => {
-			if (row.status !== "loading") return row;
-			const key = accountKey(row.provider, row.slot);
-			const prev = previous.get(key);
-			if (prev?.retryAt !== undefined && prev.retryAt > now) return prev;
-			const secret = secrets.get(key);
-			if (!secret) return { ...row, status: "error" as const, detail: "액세스 토큰 없음" };
-			return fetchOne(row, secret, { ...options, now }, prev);
-		}),
-	);
+	return stampLastUsed(await Promise.all(rows.map(resolve)), options.poolState);
 }

@@ -152,6 +152,48 @@ describe("renderFrame", () => {
 		expect(bare).toContain(`오류 · 요청 제한 (HTTP 429) · ${stamp} 재시도`);
 	});
 
+	test("최근 차감된 계정은 ▶ 마커와 '사용 중'을, 나머지는 '마지막 사용'을 단다", () => {
+		const lines = renderFrame(
+			state([
+				row({ label: "carol", lastUsedAt: NOW - 30_000 }),
+				row({ slot: "alice", label: "alice", lastUsedAt: NOW - 3 * 3_600_000 }),
+				row({ slot: "idle", label: "idle" }),
+				row({ slot: "gone", label: "gone", status: "expired", detail: "senpi가 사용 시 자동 갱신 · 재로그인 불필요", windows: [], lastUsedAt: NOW - 14 * 3_600_000 }),
+			]),
+			120,
+		).map(strip);
+
+		const active = lines.findIndex((l) => l.startsWith("  ▶ carol"));
+		expect(active).toBeGreaterThan(-1);
+		expect(lines[active + 1]).toMatch(/^  │ +사용 중 · 방금$/);
+
+		const stale = lines.findIndex((l) => l.startsWith("  ● alice"));
+		expect(stale).toBeGreaterThan(-1);
+		expect(lines[stale + 1]).toMatch(/^  │ +마지막 사용 3시간 전$/);
+
+		// lastUsedAt이 없으면 아무 말도 만들지 않는다
+		const idle = lines.findIndex((l) => l.startsWith("  ● idle"));
+		expect(lines[idle + 1] ?? "").not.toContain("사용");
+
+		const gone = lines.findIndex((l) => l.startsWith("  ● gone"));
+		expect(gone).toBeGreaterThan(-1);
+		expect(lines[gone + 1]).toMatch(/^  │ +마지막 사용 14시간 전$/);
+	});
+
+	test("사용 중 판정은 10분 경계로 갈린다", () => {
+		const stampOn = (ago: number) =>
+			renderFrame(state([row({ label: "x", lastUsedAt: NOW - ago })]), 120)
+				.map(strip)
+				.find((l) => /^  │ .*(사용 중|마지막 사용)/.test(l)) ?? "";
+		expect(stampOn(9 * 60_000 + 59_000)).toContain("사용 중");
+		expect(stampOn(10 * 60_000 + 1_000)).toContain("마지막 사용");
+	});
+
+	test("고정된 계정은 제목에 (고정)이 붙는다", () => {
+		const text = renderFrame(state([row({ label: "carol", pinned: true })]), 120).map(strip).join("\n");
+		expect(text).toContain("carol (고정)");
+	});
+
 	test("키 안내와 마지막 갱신 시각이 항상 보인다", () => {
 		const lines = renderFrame(state([row({})]), 100).map(strip);
 		const text = lines.join("\n");

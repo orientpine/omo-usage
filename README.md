@@ -1,6 +1,6 @@
 # omo-usage
 
-omo-ai(senpi)에 로그인된 **모든 계정의 잔여 사용량**을 한 화면에서 보는 터미널 UI.
+omo-ai(senpi)에 로그인된 **모든 계정의 잔여 사용량**과 **지금 차감 중인 계정**을 한 화면에서 보는 터미널 UI.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Runtime: Bun ≥ 1.2](https://img.shields.io/badge/Runtime-Bun%20%E2%89%A5%201.2-black?logo=bun)](https://bun.sh)
@@ -11,15 +11,18 @@ omo-ai(senpi)에 로그인된 **모든 계정의 잔여 사용량**을 한 화�
   ────────────────────────────────────────────────────────────────────────────────
 
   claude-sdk-oauth
-  ● alice        5h    ██████████████████░░  88% 16:00 · 2시간 뒤
+  ▶ alice (고정) 5h    ██████████████████░░  88% 16:00 · 2시간 뒤
   │              7d    ████████████░░░░░░░░  61% 9/22 14:00 · 3일 뒤
   │              Fable ███████████████████░  96% 9/22 14:00 · 3일 뒤
+  │              사용 중 · 방금
 
   ● bob          5h    ██████░░░░░░░░░░░░░░  32% 18:00 · 4시간 뒤
   │              7d    ██████░░░░░░░░░░░░░░  31% 9/24 14:00 · 5일 뒤
   │              Fable ░░░░░░░░░░░░░░░░░░░░   0% 9/24 14:00 · 5일 뒤
+  │              마지막 사용 3시간 전
 
   ● carol        만료 · senpi가 사용 시 자동 갱신 · 재로그인 불필요
+  │              마지막 사용 14시간 전
 
   openai-codex
   ● ann (pro)    7d    ██████████████░░░░░░  71% 9/23 14:00 · 4일 뒤
@@ -37,7 +40,7 @@ omo-ai(senpi)에 로그인된 **모든 계정의 잔여 사용량**을 한 화�
   [r] 새로고침   [q] 종료
 ```
 
-senpi에 Claude·Codex·xAI 계정을 여러 개 물려 쓰다 보면 "지금 어느 계정이 얼마나 남았지?"를 매번 확인하기 번거롭다. omo-usage는 senpi가 저장한 자격증명을 **읽기만** 해서 계정별 잔여 비율과 리셋 시각을 한 번에 보여준다. 토큰은 절대 화면·출력·로그에 나오지 않고, 응답을 해석할 수 없으면 숫자를 지어내는 대신 사유를 적는다.
+senpi에 Claude·Codex·xAI 계정을 여러 개 물려 쓰다 보면 "지금 어느 계정이 얼마나 남았지?", "지금은 어느 계정을 쓰고 있지?"를 매번 확인하기 번거롭다. omo-usage는 senpi가 저장한 자격증명을 **읽기만** 해서 계정별 잔여 비율과 리셋 시각을 한 번에 보여준다. 토큰은 절대 화면·출력·로그에 나오지 않고, 응답을 해석할 수 없으면 숫자를 지어내는 대신 사유를 적는다.
 
 ## 빠른 시작
 
@@ -57,7 +60,7 @@ omo-usage
 
 | 명령 | 동작 |
 | --- | --- |
-| `omo-usage` | TUI. 150초마다 자동 갱신, `r` 즉시 갱신, `q` / `Ctrl-C` 종료 |
+| `omo-usage` | TUI. 사용량은 150초마다, 차감 중 표시(`▶`)는 5초마다 갱신. `r` 즉시 갱신, `q` / `Ctrl-C` 종료 |
 | `omo-usage --once` | 한 번 조회해 한 줄씩 출력하고 종료 |
 | `omo-usage --json` | 같은 결과를 JSON으로 출력 (토큰 없음) |
 | `omo-usage --help` | 도움말 |
@@ -65,7 +68,8 @@ omo-usage
 
 ### 화면 읽는 법
 
-- **한 계정 = 한 블록.** 첫 줄 `●` 뒤에 계정 이름(Codex는 `(pro)`/`(team)` 플랜), 이어지는 창은 `│`로 묶인다.
+- **한 계정 = 한 블록.** 첫 줄 `●` 뒤에 계정 이름(Codex는 `(pro)`/`(team)` 플랜, auth.json이 고정한 슬롯은 `(고정)`), 이어지는 창은 `│`로 묶인다.
+- **지금 차감 중인 계정은 `▶`다.** senpi가 최근 10분 안에 그 계정으로 요청을 성공시켰으면 마커가 초록 `▶`가 되고 블록 끝에 `사용 중 · 방금`이 붙는다. 더 오래됐으면 `●` 그대로에 dim `마지막 사용 3시간 전`. senpi는 세션마다 계정을 따로 고르므로 `▶`가 둘 이상일 수 있다. Codex·xAI·google은 senpi가 이 기록을 남기지 않아 아무 표시도 없다.
 - **막대와 %는 남은 양이다.** 100%가 아직 하나도 안 쓴 상태. 초록 ≥ 50% · 노랑 ≥ 20% · 빨강 < 20%.
 - **창 이름**: `5h` 세션, `7d` 주간, `Fable`처럼 모델 이름이 붙으면 그 모델의 주간 한도.
 - **리셋 시각**은 오늘이면 `16:00`, 아니면 `9/22 14:00`, 그 뒤에 `2시간 뒤` 같은 상대 시간.
@@ -98,21 +102,30 @@ omo-usage
       { "label": "5h", "kind": "session", "remainingPercent": 88, "resetsAt": 1789830000000 },
       { "label": "7d", "kind": "weekly", "remainingPercent": 61, "resetsAt": 1790082000000 },
       { "label": "Fable", "kind": "scoped", "remainingPercent": 96, "resetsAt": 1790082000000 }
-    ]
+    ],
+    "pinned": true,
+    "lastUsedAt": 1789822760000
   }
 ]
 ```
 
 - `status`: `ok` · `expired` · `error` · `unsupported`. `detail`은 사유 문자열(없으면 `null`).
 - `windows[].kind`: `session`(5h) · `weekly`(7d) · `scoped`(모델별) · `other`. 시각은 전부 epoch ms.
+- `lastUsedAt`: senpi가 그 계정으로 마지막으로 성공한 요청 시각(epoch ms, `~/.omo/agent/credential-pool-state.json`의 `lastSuccessAt`). 기록이 없는 provider(Codex·xAI·google)에는 키 자체가 없다. `pinned: true`는 auth.json이 그 슬롯을 고정한 경우에만 붙는다.
 - 429로 이전 값을 유지 중이면 `retryAt`, xAI 제품별 내역은 `note`가 추가로 붙는다.
 
 ```sh
 # 예: 계정별 7d 잔여만
 omo-usage --json | jq -r '.[] | select(.status=="ok") | "\(.provider)/\(.label)\t\(.windows[] | select(.label=="7d") | .remainingPercent)%"'
+
+# 예: 지금 차감 중인 계정 (최근 10분)
+omo-usage --json | jq -r --argjson now "$(date +%s000)" '.[] | select(.lastUsedAt != null and $now - .lastUsedAt < 600000) | .label'
 ```
 
 ## FAQ
+
+**지금 senpi가 어느 계정을 차감하고 있는지 알 수 있나?**
+`▶`가 붙은 계정이다. senpi는 요청이 성공할 때마다 `~/.omo/agent/credential-pool-state.json`에 그 슬롯의 `lastSuccessAt`을 적고, omo-usage는 그 값이 10분 이내인 슬롯을 `사용 중`으로 표시한다. TUI는 이 파일만 5초마다 다시 읽으므로 사용량 조회 주기(150초)와 무관하게 바로 따라온다. "지금 이 계정 하나"라고 단정하지 않는 이유가 있다: senpi는 세션마다 해시로 계정을 고르고(고정 계정이 있으면 그것을 우선), 세션이 여럿이면 여러 계정이 동시에 차감된다. 그래서 `▶`는 둘 이상일 수 있고, 옆의 `방금`·`3분 전`이 판단 근거다. Codex·xAI·google은 senpi가 이 기록을 남기지 않아 표시하지 않는다.
 
 **"만료"라는데 다시 로그인해야 하나?**
 대개 아니다. 액세스 토큰 만료는 정상이고, refresh token이 살아 있으면 senpi가 그 계정을 다음에 쓰는 순간 자동 갱신한다. omo-usage는 auth.json을 읽기만 하므로 갱신을 대신 해 주지 못하고(직접 refresh하면 refresh token이 회전돼 senpi 저장본이 깨진다) 만료 상태를 그대로 보여줄 뿐이다. 재로그인이 필요한 건 `refresh 실패`가 붙은 경우뿐이며, 그때는 omo TUI에서 `/login claude-sdk-oauth`를 실행하고 이름 프롬프트에 기존 슬롯 이름을 입력하면 제자리에서 교체된다.
@@ -143,6 +156,7 @@ auth.json은 읽기 전용으로 열고, 토큰은 fetch 호출에만 쓴다. �
 - **숫자를 지어내지 않는다.** 응답이 비었거나 형식이 다르면 막대 대신 사유를 보여준다.
 - **auth.json에 쓰지 않는다.** 토큰 갱신은 senpi 몫이다.
 - **만료 ≠ 죽음.** 재로그인 안내는 senpi failover가 `blockReason: "auth_error"`로 찍은 슬롯에만 붙인다.
+- **"현재 계정" 하나를 단정하지 않는다.** senpi의 계정 선택은 세션별이라, 슬롯마다 마지막 차감 시각을 그대로 보여주고 최근(10분)이면 `▶`로 부른다.
 - **429에 막대를 지우지 않는다.** 직전 값 유지 + 재시도 시각 표시 + 그 전엔 호출 안 함.
 - **한 줄도 터미널 폭을 넘지 않는다.** 한글·전각 폭을 직접 계산해 색을 입혀도 열이 흔들리지 않는다.
 
@@ -154,6 +168,7 @@ auth.json은 읽기 전용으로 열고, 토큰은 fetch 호출에만 쓴다. �
 - **xAI 응답은 proto3 JSON이라 0은 키가 빠진다.** `config.currentPeriod`가 있는데 `creditUsagePercent`만 없으면 0(잔여 100%)으로 읽고, `currentPeriod` 자체가 없으면 크레딧 응답이 아니므로 `오류`로 둔다. `{"val":0}`은 `{}`로 온다.
 - **Anthropic 429 창은 토큰당 약 95초**(2026-09-18 실측). `Retry-After`가 있으면 그 값을, 없으면 120초를 쿨다운으로 쓴다.
 - **xAI 슬롯의 라벨은 `default`다.** senpi가 xai에는 displayName을 저장하지 않는다.
+- **차감 기록은 `credential-pool-state.json`에만 있다.** `providers.<provider>.lanes.stored.slots.<슬롯>.lastSuccessAt`이 요청 성공마다 갱신된다. `lease`는 half-open 프로브 잠금(30초)이라 사용 중 신호가 아니다. 옛 슬롯 이름·계정 id 키가 잔재로 남아 있어 현재 auth.json 슬롯 이름으로만 대조하고, Codex 슬롯은 이 파일에 아예 없다.
 
 </details>
 
@@ -170,12 +185,13 @@ bun run src/main.ts   # 로컬 실행 (= bin/omo-usage.ts)
 ```
 src/
   main.ts         CLI 진입: --once / --json / --help, 아니면 TUI
-  tui.ts          대체 화면, 키 입력, 150초 자동 갱신, 429 재시도 예약
+  tui.ts          대체 화면, 키 입력, 150초 자동 갱신, 5초 pool-state 갱신, 429 재시도 예약
   collect.ts      provider별 fetch와 429 쿨다운
   parse.ts        응답 → UsageWindow (Claude / Codex / xAI)
-  auth.ts         auth.json → 계정 로스터, 만료 판정과 사유
+  auth.ts         auth.json → 계정 로스터, 만료 판정과 사유, 고정 슬롯
+  pool.ts         credential-pool-state.json → 슬롯별 마지막 차감 시각 (▶ 사용 중)
   credentials.ts  토큰 맵 (화면 상태와 분리)
-  render.ts       프레임 렌더: 폭 계산, 색, ● / │ 가이드
+  render.ts       프레임 렌더: 폭 계산, 색, ● / ▶ / │ 가이드
   types.ts        AccountRow, UsageWindow
 ```
 

@@ -87,6 +87,38 @@ describe("collectUsage · 429 처리", () => {
 	});
 });
 
+describe("collectUsage · pool state", () => {
+	const POOL = {
+		providers: { "claude-sdk-oauth": { lanes: { stored: { slots: { default: { lastSuccessAt: NOW - 30_000 } } } } } },
+	};
+
+	test("pool state의 마지막 성공 시각을 계정 행에 붙인다", async () => {
+		const rows = await collectUsage(AUTH, { fetchImpl: fakeFetch({}).fetchImpl, now: NOW, poolState: POOL });
+		expect(find(rows, "default").lastUsedAt).toBe(NOW - 30_000);
+		expect(find(rows, "bob").lastUsedAt).toBeUndefined();
+	});
+
+	test("429로 이전 막대를 유지한 행에도 붙는다", async () => {
+		const first = await collectUsage(AUTH, { fetchImpl: fakeFetch({}).fetchImpl, now: NOW });
+		const rows = await collectUsage(AUTH, {
+			fetchImpl: fakeFetch({ "tok-alice": 429 }).fetchImpl,
+			now: NOW + 60_000,
+			previous: first,
+			poolState: POOL,
+		});
+		const kept = find(rows, "default");
+		expect(kept.detail).toContain("요청 제한");
+		expect(kept.lastUsedAt).toBe(NOW - 30_000);
+	});
+
+	test("pool state가 없거나 깨졌으면 아무 행에도 붙지 않는다", async () => {
+		for (const poolState of [undefined, null, "garbage", {}]) {
+			const rows = await collectUsage(AUTH, { fetchImpl: fakeFetch({}).fetchImpl, now: NOW, poolState });
+			expect(rows.every((r) => r.lastUsedAt === undefined)).toBe(true);
+		}
+	});
+});
+
 describe("collectUsage · xai", () => {
 	const XAI_AUTH = { xai: { type: "oauth", access: "tok-xai", refresh: "r", expires: future } };
 	const XAI_BODY = {

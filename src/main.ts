@@ -1,5 +1,7 @@
 import { collectUsage } from "./collect.ts";
 import { readAuthFile, AUTH_PATH } from "./credentials.ts";
+import { readPoolState } from "./pool.ts";
+import { usageStamp } from "./render.ts";
 
 const HELP = `omo-usage — omo-ai에 로그인된 모든 계정의 잔여 사용량
 
@@ -11,12 +13,13 @@ const HELP = `omo-usage — omo-ai에 로그인된 모든 계정의 잔여 사�
 
 자격증명: ${AUTH_PATH} (읽기 전용)`;
 
-function plain(rows: Awaited<ReturnType<typeof collectUsage>>): string {
+function plain(rows: Awaited<ReturnType<typeof collectUsage>>, now: number): string {
 	return rows
 		.map((row) => {
 			const windows = row.windows.map((w) => `${w.label} ${w.remainingPercent}% 남음`).join(" · ");
 			const status = row.status === "ok" ? (row.note ? `${windows} · ${row.note}` : windows) : `${row.status.toUpperCase()}${row.detail ? ` (${row.detail})` : ""}`;
-			return `${row.provider.padEnd(17)} ${row.label.padEnd(12)} ${status}`;
+			const stamp = usageStamp(row, now);
+			return `${row.provider.padEnd(17)} ${row.label.padEnd(12)} ${status}${stamp.text.length > 0 ? ` · ${stamp.text}` : ""}`;
 		})
 		.join("\n");
 }
@@ -29,9 +32,9 @@ if (args.has("--help") || args.has("-h")) {
 }
 
 if (args.has("--json") || args.has("--once")) {
-	const auth = await readAuthFile();
-	const rows = await collectUsage(auth);
-	console.log(args.has("--json") ? JSON.stringify(rows, null, 2) : plain(rows));
+	const [auth, poolState] = await Promise.all([readAuthFile(), readPoolState()]);
+	const rows = await collectUsage(auth, { poolState });
+	console.log(args.has("--json") ? JSON.stringify(rows, null, 2) : plain(rows, Date.now()));
 	process.exit(0);
 }
 

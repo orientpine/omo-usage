@@ -105,6 +105,27 @@ describe("buildRoster", () => {
 		expect(detail("idle")).not.toContain("/login");
 	});
 
+	test("auth.json의 pinned 슬롯만 pinned 표시를 받는다", () => {
+		const rows = buildRoster(
+			{
+				"claude-sdk-oauth": {
+					type: "oauth",
+					access: "a",
+					refresh: "r",
+					expires: future,
+					pinned: "second",
+					accounts: [
+						{ name: "first", access: "a", refresh: "r", expires: future, source: "login" },
+						{ name: "second", access: "a", refresh: "r", expires: future, source: "login" },
+					],
+				},
+			},
+			NOW,
+		);
+		expect(rows.find((r) => r.slot === "second")?.pinned).toBe(true);
+		expect(rows.find((r) => r.slot === "first")?.pinned).toBeUndefined();
+	});
+
 	test("빈 auth.json이면 빈 배열", () => {
 		expect(buildRoster({}, NOW)).toEqual([]);
 		expect(buildRoster(null, NOW)).toEqual([]);

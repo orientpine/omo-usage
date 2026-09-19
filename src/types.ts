@@ -30,4 +30,8 @@ export interface AccountRow {
 	readonly retryAt?: number;
 	/** 막대 아래 가이드 줄에 dim으로 붙는 보조 정보 (xai 제품별 사용 내역 등) */
 	readonly note?: string;
+	/** senpi가 이 계정으로 마지막으로 성공한 요청 시각 (epoch ms, credential-pool-state.json 기준) */
+	readonly lastUsedAt?: number;
+	/** auth.json이 이 슬롯을 고정해 둔 경우 (senpi가 이 계정을 우선 고른다) */
+	readonly pinned?: true;
 }

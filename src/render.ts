@@ -19,10 +19,14 @@ const RESET = "\u001B[0m";
 const DIM = "90";
 const BOLD_CYAN = "1;36";
 const BOLD_WHITE = "1;97";
-/** 계정 첫 줄 앞의 마커와 이어지는 줄의 가이드. 둘 다 4칸이라 열 정렬을 흔들지 않는다. */
+/** 계정 첫 줄 앞의 마커와 이어지는 줄의 가이드. 전부 4칸이라 열 정렬을 흔들지 않는다. */
 const MARKER = "  ● ";
+const ACTIVE_MARKER = "  ▶ ";
 const GUIDE = "  │ ";
 const GREEN = "32";
+const BOLD_GREEN = "1;32";
+/** 이 시간 안에 성공 요청이 있었으면 senpi가 지금 그 계정을 쓰는 중으로 본다. */
+export const ACTIVE_WINDOW_MS = 10 * 60_000;
 const YELLOW = "33";
 const RED = "31";
 
@@ -124,6 +128,30 @@ function formatReset(resetsAt: number | null, now: number): string {
 	return diff <= 0 ? `${stamp} · 초기화됨` : `${stamp} · ${relative(diff)}`;
 }
 
+function elapsed(ms: number): string {
+	const minutes = Math.floor(ms / 60_000);
+	if (minutes < 1) return "방금";
+	if (minutes < 60) return `${minutes}분 전`;
+	const hours = Math.floor(minutes / 60);
+	return hours < 24 ? `${hours}시간 전` : `${Math.floor(hours / 24)}일 전`;
+}
+
+export interface UsageStamp {
+	readonly text: string;
+	readonly active: boolean;
+}
+
+/**
+ * 계정 선택이 세션별 해시라 "지금 이 계정 하나"라고 단정할 수 없다. 그래서 단정 대신 마지막 차감 시각을 적고,
+ * 최근이면 사용 중으로 부른다 — 숫자가 옆에 있으니 읽는 사람이 판단할 수 있다.
+ */
+export function usageStamp(row: AccountRow, now: number): UsageStamp {
+	if (row.lastUsedAt === undefined) return { text: "", active: false };
+	const age = Math.max(0, now - row.lastUsedAt);
+	const active = age <= ACTIVE_WINDOW_MS;
+	return { text: active ? `사용 중 · ${elapsed(age)}` : `마지막 사용 ${elapsed(age)}`, active };
+}
+
 function levelColor(remaining: number): string {
 	if (remaining >= 50) return GREEN;
 	if (remaining >= 20) return YELLOW;
@@ -151,7 +179,7 @@ function staleNote(row: AccountRow): string {
 }
 
 function accountTitle(row: AccountRow): string {
-	return row.plan ? `${row.label} (${row.plan})` : row.label;
+	return `${row.label}${row.plan ? ` (${row.plan})` : ""}${row.pinned ? " (고정)" : ""}`;
 }
 
 export function renderFrame(state: AppState, cols: number): string[] {
@@ -190,17 +218,23 @@ export function renderFrame(state: AppState, cols: number): string[] {
 			lines.push("");
 		}
 
+		const stamp = usageStamp(row, state.now);
+		const marker: Part = stamp.active ? { t: ACTIVE_MARKER, c: BOLD_GREEN } : { t: MARKER, c: BOLD_WHITE };
+		const stampLine =
+			stamp.text.length === 0 ? null : compose([{ t: GUIDE, c: DIM }, { t: pad("", titleWidth + 1) }, { t: stamp.text, c: stamp.active ? GREEN : DIM }], width);
+
 		if (row.windows.length === 0) {
 			lines.push(
 				compose(
 					[
-						{ t: MARKER, c: BOLD_WHITE },
+						marker,
 						{ t: pad(accountTitle(row), titleWidth + 1), c: BOLD_WHITE },
 						{ t: statusText(row), c: row.status === "unsupported" ? DIM : YELLOW },
 					],
 					width,
 				),
 			);
+			if (stampLine !== null) lines.push(stampLine);
 			continue;
 		}
 
@@ -210,7 +244,7 @@ export function renderFrame(state: AppState, cols: number): string[] {
 			lines.push(
 				compose(
 					[
-						index === 0 ? { t: MARKER, c: BOLD_WHITE } : { t: GUIDE, c: DIM },
+						index === 0 ? marker : { t: GUIDE, c: DIM },
 						{ t: pad(index === 0 ? accountTitle(row) : "", titleWidth + 1), c: BOLD_WHITE },
 						{ t: pad(window.label, windowWidth + 1), c: DIM },
 						{ t: shape.filled, c: color },
@@ -227,6 +261,7 @@ export function renderFrame(state: AppState, cols: number): string[] {
 		if (row.note) {
 			lines.push(compose([{ t: GUIDE, c: DIM }, { t: pad("", titleWidth + 1) }, { t: row.note, c: DIM }], width));
 		}
+		if (stampLine !== null) lines.push(stampLine);
 	}
 
 	lines.push("");

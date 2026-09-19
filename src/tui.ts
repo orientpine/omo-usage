@@ -1,6 +1,7 @@
 import type { AccountRow } from "./types.ts";
 import { collectUsage } from "./collect.ts";
 import { readAuthFile } from "./credentials.ts";
+import { readPoolState, stampLastUsed } from "./pool.ts";
 import { renderFrame, type AppState } from "./render.ts";
 
 const ALT_SCREEN_ON = "\u001B[?1049h";
@@ -14,6 +15,8 @@ const CLEAR_BELOW = "\u001B[J";
 /** Anthropic usage 엔드포인트의 토큰당 쿨다운(약 95초)보다 길어야 자동 갱신마다 429를 맞지 않는다. */
 const AUTO_REFRESH_MS = 150_000;
 const TICK_MS = 1_000;
+/** 어느 계정이 차감 중인지는 로컬 파일 하나로 알 수 있으니, 사용량 조회와 따로 짧게 돌린다. */
+const POOL_TICK_MS = 5_000;
 
 interface Mutable {
 	rows: AccountRow[];
@@ -38,8 +41,8 @@ export async function runTui(): Promise<void> {
 
 	// 파이프로 넘길 때는 TUI 대신 한 번만 출력한다.
 	if (!process.stdout.isTTY) {
-		const auth = await readAuthFile();
-		state.rows = await collectUsage(auth);
+		const [auth, poolState] = await Promise.all([readAuthFile(), readPoolState()]);
+		state.rows = await collectUsage(auth, { poolState });
 		for (const line of renderFrame({ ...snapshot(state), updatedAt: Date.now() }, process.stdout.columns ?? 100)) console.log(line);
 		return;
 	}
@@ -65,8 +68,8 @@ export async function runTui(): Promise<void> {
 		state.refreshing = true;
 		draw(state);
 		try {
-			const auth = await readAuthFile();
-			const rows = await collectUsage(auth, { signal: controller.signal, previous: state.rows });
+			const [auth, poolState] = await Promise.all([readAuthFile(), readPoolState()]);
+			const rows = await collectUsage(auth, { signal: controller.signal, previous: state.rows, poolState });
 			if (controller.signal.aborted || closed) return;
 			state.rows = rows;
 			state.updatedAt = Date.now();
@@ -83,6 +86,14 @@ export async function runTui(): Promise<void> {
 
 	const tick = setInterval(() => !closed && draw(state), TICK_MS);
 	const auto = setInterval(() => void refresh(), AUTO_REFRESH_MS);
+	const poolTick = setInterval(() => {
+		void (async () => {
+			const poolState = await readPoolState();
+			if (closed) return;
+			state.rows = stampLastUsed(state.rows, poolState);
+			draw(state);
+		})();
+	}, POOL_TICK_MS);
 	const onResize = (): void => draw(state);
 
 	const quit = (code: number): void => {
@@ -90,6 +101,7 @@ export async function runTui(): Promise<void> {
 		closed = true;
 		clearInterval(tick);
 		clearInterval(auto);
+		clearInterval(poolTick);
 		if (retryTimer) clearTimeout(retryTimer);
 		inflight?.abort();
 		process.stdout.off("resize", onResize);
