@@ -6,6 +6,13 @@ omo-ai(senpi)에 로그인된 **모든 계정의 잔여 사용량**과 **지금 
 [![Runtime: Bun ≥ 1.2](https://img.shields.io/badge/Runtime-Bun%20%E2%89%A5%201.2-black?logo=bun)](https://bun.sh)
 [![Install from GitHub](https://img.shields.io/badge/install-github%3Aorientpine%2Fomo--usage-blue?logo=github)](#빠른-시작)
 
+<p align="center">
+  <img src="docs/demo.png" width="670" alt="omo-usage TUI: 계정별 5h/7d/모델별 잔여 막대, ▶ 사용 중 표시, 만료 사유 (데모 데이터)">
+</p>
+
+<details>
+<summary>텍스트 버전 (위 화면과 같은 데모 데이터)</summary>
+
 ```
   omo-ai 계정 사용량                               계정 7 · 정상 5 · 갱신 14:00:00
   ────────────────────────────────────────────────────────────────────────────────
@@ -40,7 +47,9 @@ omo-ai(senpi)에 로그인된 **모든 계정의 잔여 사용량**과 **지금 
   [r] 새로고침   [q] 종료
 ```
 
-senpi에 Claude·Codex·xAI 계정을 여러 개 물려 쓰다 보면 "지금 어느 계정이 얼마나 남았지?", "지금은 어느 계정을 쓰고 있지?"를 매번 확인하기 번거롭다. omo-usage는 senpi가 저장한 자격증명을 **읽기만** 해서 계정별 잔여 비율과 리셋 시각을 한 번에 보여준다. 토큰은 절대 화면·출력·로그에 나오지 않고, 응답을 해석할 수 없으면 숫자를 지어내는 대신 사유를 적는다.
+</details>
+
+senpi에 Claude·Codex·xAI 계정을 여러 개 물려 쓰다 보면 "지금 어느 계정이 얼마나 남았지?", "지금은 어느 계정을 쓰고 있지?"를 매번 확인하기 번거롭다. omo-usage는 senpi가 저장한 자격증명과 계정 풀 상태를 **읽기만** 해서 계정별 잔여 비율·리셋 시각과 지금 차감 중인 계정을 한 번에 보여준다. 토큰은 절대 화면·출력·로그에 나오지 않고, 응답을 해석할 수 없으면 숫자를 지어내는 대신 사유를 적는다.
 
 ## 빠른 시작
 
@@ -55,6 +64,15 @@ omo-usage
 
 > [!NOTE]
 > 코드가 Bun 전용(`Bun.file`, `Bun.argv`, 빌드 없이 `.ts` 실행)이라 npm으로 설치해도 실행은 bun이 한다. senpi 자체가 bun 위에서 돌기 때문에 senpi 사용자는 추가로 깔 것이 없다.
+
+## 어떻게 동작하나
+
+```
+~/.omo/agent/auth.json                  ─ 읽기만 ─▶ 계정 로스터 ─▶ provider별 usage API ─▶ 잔여 막대 · 리셋 시각
+~/.omo/agent/credential-pool-state.json ─ 읽기만 ─▶ 슬롯별 lastSuccessAt ─▶ ▶ 사용 중 · 마지막 사용
+```
+
+senpi가 쓰는 두 파일을 열어 볼 뿐 한 바이트도 쓰지 않는다. 토큰 갱신과 계정 선택은 전부 senpi 몫이라 omo-usage를 켜 둔다고 senpi 동작이 바뀌지 않는다. 사용량은 150초마다 다시 조회하고(Anthropic의 429 쿨다운보다 길게), 차감 중 표시는 로컬 파일 하나라 5초마다 다시 읽는다.
 
 ## 사용법
 
