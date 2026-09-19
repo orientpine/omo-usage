@@ -1,0 +1,131 @@
+import { describe, expect, test } from "bun:test";
+import { collectUsage, RATE_LIMIT_COOLDOWN_MS } from "../src/collect.ts";
+import type { AccountRow } from "../src/types.ts";
+
+const NOW = Date.UTC(2026, 8, 18, 4, 30, 0);
+const future = NOW + 3_600_000;
+
+const AUTH = {
+	"claude-sdk-oauth": {
+		type: "oauth",
+		access: "a",
+		refresh: "r",
+		expires: future,
+		accounts: [
+			{ name: "default", displayName: "alice", access: "tok-alice", refresh: "r", expires: future, source: "login" },
+			{ name: "bob", displayName: null, access: "tok-bob", refresh: "r", expires: future, source: "login" },
+		],
+	},
+};
+
+const OK_BODY = { five_hour: { utilization: 16, resets_at: "2026-09-18T09:00:00Z" }, seven_day: { utilization: 44, resets_at: "2026-09-22T00:00:00Z" } };
+const LIMITED_BODY = { error: { type: "rate_limit_error", message: "Rate limited. Please try again later." } };
+
+function fakeFetch(byToken: Record<string, number>): { fetchImpl: typeof fetch; calls: string[] } {
+	const calls: string[] = [];
+	const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
+		const token = String(new Headers(init?.headers).get("authorization")).replace("Bearer ", "");
+		calls.push(token);
+		const status = byToken[token] ?? 200;
+		return new Response(JSON.stringify(status === 200 ? OK_BODY : LIMITED_BODY), { status, headers: { "content-type": "application/json" } });
+	}) as unknown as typeof fetch;
+	return { fetchImpl, calls };
+}
+
+function find(rows: AccountRow[], slot: string): AccountRow {
+	const row = rows.find((r) => r.slot === slot);
+	if (!row) throw new Error(`row ${slot} missing`);
+	return row;
+}
+
+describe("collectUsage · 429 처리", () => {
+	test("첫 조회에서 429면 막대 없이 재시도 시각을 보여준다", async () => {
+		const { fetchImpl } = fakeFetch({ "tok-bob": 429 });
+		const rows = await collectUsage(AUTH, { fetchImpl, now: NOW });
+		const bob = find(rows, "bob");
+		expect(bob.status).toBe("error");
+		expect(bob.windows).toEqual([]);
+		expect(bob.detail).toContain("요청 제한");
+		expect(bob.retryAt).toBe(NOW + RATE_LIMIT_COOLDOWN_MS);
+		expect(find(rows, "default").status).toBe("ok");
+	});
+
+	test("이전 값이 있으면 429여도 막대를 유지하고 사유만 덧붙인다", async () => {
+		const first = await collectUsage(AUTH, { fetchImpl: fakeFetch({}).fetchImpl, now: NOW });
+		const { fetchImpl } = fakeFetch({ "tok-bob": 429 });
+		const rows = await collectUsage(AUTH, { fetchImpl, now: NOW + 60_000, previous: first });
+		const bob = find(rows, "bob");
+		expect(bob.status).toBe("ok");
+		expect(bob.windows).toEqual(find(first, "bob").windows);
+		expect(bob.detail).toContain("요청 제한");
+		expect(bob.retryAt).toBe(NOW + 60_000 + RATE_LIMIT_COOLDOWN_MS);
+	});
+
+	test("재시도 시각 전에는 그 계정을 아예 호출하지 않고 이전 줄을 그대로 돌려준다", async () => {
+		const limited = await collectUsage(AUTH, { fetchImpl: fakeFetch({ "tok-bob": 429 }).fetchImpl, now: NOW });
+		const { fetchImpl, calls } = fakeFetch({});
+		const rows = await collectUsage(AUTH, { fetchImpl, now: NOW + 1_000, previous: limited });
+		expect(calls).toEqual(["tok-alice"]);
+		expect(find(rows, "bob")).toEqual(find(limited, "bob"));
+	});
+
+	test("재시도 시각이 지나면 다시 호출하고 성공하면 사유와 재시도 시각을 지운다", async () => {
+		const limited = await collectUsage(AUTH, { fetchImpl: fakeFetch({ "tok-bob": 429 }).fetchImpl, now: NOW });
+		const { fetchImpl, calls } = fakeFetch({});
+		const rows = await collectUsage(AUTH, { fetchImpl, now: NOW + RATE_LIMIT_COOLDOWN_MS, previous: limited });
+		expect(calls.sort()).toEqual(["tok-alice", "tok-bob"]);
+		const bob = find(rows, "bob");
+		expect(bob.status).toBe("ok");
+		expect(bob.detail).toBeNull();
+		expect(bob.retryAt).toBeUndefined();
+	});
+
+	test("Retry-After 헤더가 양수면 그 값을 쿨다운으로 쓴다", async () => {
+		const fetchImpl = (async () => new Response(JSON.stringify(LIMITED_BODY), { status: 429, headers: { "retry-after": "90" } })) as unknown as typeof fetch;
+		const rows = await collectUsage(AUTH, { fetchImpl, now: NOW });
+		expect(find(rows, "default").retryAt).toBe(NOW + 90_000);
+	});
+});
+
+describe("collectUsage · xai", () => {
+	const XAI_AUTH = { xai: { type: "oauth", access: "tok-xai", refresh: "r", expires: future } };
+	const XAI_BODY = {
+		config: {
+			currentPeriod: { type: "USAGE_PERIOD_TYPE_WEEKLY", start: "2026-09-15T02:26:42Z", end: "2026-09-22T02:26:42Z" },
+			creditUsagePercent: 13,
+			productUsage: [
+				{ product: "GrokBuild", usagePercent: 12 },
+				{ product: "GrokImagine", usagePercent: 1 },
+			],
+		},
+	};
+
+	function xaiFetch(body: unknown, status = 200): { fetchImpl: typeof fetch; seen: { url: string; headers: Headers }[] } {
+		const seen: { url: string; headers: Headers }[] = [];
+		const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+			seen.push({ url: String(url), headers: new Headers(init?.headers) });
+			return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+		}) as unknown as typeof fetch;
+		return { fetchImpl, seen };
+	}
+
+	test("cli-chat-proxy billing 엔드포인트를 베어러만으로 부르고 7d 창과 내역을 만든다", async () => {
+		const { fetchImpl, seen } = xaiFetch(XAI_BODY);
+		const rows = await collectUsage(XAI_AUTH, { fetchImpl, now: NOW });
+		expect(seen.map((s) => s.url)).toEqual(["https://cli-chat-proxy.grok.com/v1/billing?format=credits"]);
+		expect(seen[0]?.headers.get("authorization")).toBe("Bearer tok-xai");
+		const xai = find(rows, "default");
+		expect(xai.provider).toBe("xai");
+		expect(xai.status).toBe("ok");
+		expect(xai.windows).toEqual([{ label: "7d", kind: "weekly", remainingPercent: 87, resetsAt: Date.parse("2026-09-22T02:26:42Z") }]);
+		expect(xai.note).toContain("GrokBuild 12%");
+	});
+
+	test("config가 null이면 숫자를 지어내지 않고 오류로 표시한다", async () => {
+		const rows = await collectUsage(XAI_AUTH, { fetchImpl: xaiFetch({ config: null }).fetchImpl, now: NOW });
+		const xai = find(rows, "default");
+		expect(xai.status).toBe("error");
+		expect(xai.windows).toEqual([]);
+		expect(xai.note).toBeUndefined();
+	});
+});

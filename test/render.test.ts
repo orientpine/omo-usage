@@ -1,0 +1,167 @@
+import { describe, expect, test } from "bun:test";
+import { displayWidth, renderFrame, type AppState } from "../src/render.ts";
+import type { AccountRow } from "../src/types.ts";
+
+const NOW = Date.UTC(2026, 8, 17, 7, 30, 0);
+const ESC = /\u001B\[[0-9;]*m/g;
+const strip = (s: string) => s.replace(ESC, "");
+
+function row(over: Partial<AccountRow>): AccountRow {
+	return {
+		provider: "claude-sdk-oauth",
+		slot: "default",
+		label: "alice",
+		status: "ok",
+		detail: null,
+		plan: null,
+		expiresAt: null,
+		windows: [{ label: "5h", kind: "session", remainingPercent: 50, resetsAt: NOW + 3_600_000 }],
+		...over,
+	};
+}
+
+function state(rows: AccountRow[]): AppState {
+	return { rows, updatedAt: NOW, refreshing: false, error: null, now: NOW };
+}
+
+describe("displayWidth", () => {
+	test("한글/전각은 2칸, 아스키는 1칸, ANSI 색은 0칸", () => {
+		expect(displayWidth("abc")).toBe(3);
+		expect(displayWidth("한글")).toBe(4);
+		expect(displayWidth("계정 usage")).toBe(10);
+		expect(displayWidth("\u001B[32mok\u001B[0m")).toBe(2);
+	});
+});
+
+describe("renderFrame", () => {
+	test("모든 계정과 잔여 비율이 화면에 나온다", () => {
+		const lines = renderFrame(
+			state([
+				row({}),
+				row({ slot: "bob", label: "bob", windows: [{ label: "7d", kind: "weekly", remainingPercent: 69, resetsAt: null }] }),
+				row({ provider: "openai-codex", slot: "login-2", label: "dana", plan: "team", windows: [{ label: "5h", kind: "session", remainingPercent: 0, resetsAt: NOW + 600_000 }] }),
+			]),
+			120,
+		).map(strip);
+		const text = lines.join("\n");
+		expect(text).toContain("alice");
+		expect(text).toContain("bob");
+		expect(text).toContain("dana");
+		expect(text).toContain("claude-sdk-oauth");
+		expect(text).toContain("openai-codex");
+		expect(text).toContain("50%");
+		expect(text).toContain("69%");
+		expect(text).toContain("0%");
+		expect(text).toContain("team");
+	});
+
+	test("같은 provider 안의 계정은 빈 줄로 나뉘고, 첫 줄은 ● 마커·이어지는 줄은 │ 가이드를 단다", () => {
+		const two = [
+			{ label: "5h", kind: "session" as const, remainingPercent: 50, resetsAt: NOW + 3_600_000 },
+			{ label: "7d", kind: "weekly" as const, remainingPercent: 30, resetsAt: null },
+		];
+		const lines = renderFrame(
+			state([
+				row({ windows: two }),
+				row({ slot: "bob", label: "bob", windows: two }),
+				row({ slot: "carol", label: "carol", windows: two }),
+				row({ provider: "xai", slot: "default", label: "xai", status: "unsupported", detail: "사용량 API 없음", windows: [] }),
+			]),
+			120,
+		).map(strip);
+
+		const first = lines.findIndex((l) => l.startsWith("  ● alice"));
+		const second = lines.findIndex((l) => l.startsWith("  ● bob"));
+		const third = lines.findIndex((l) => l.startsWith("  ● carol"));
+		expect(first).toBeGreaterThan(-1);
+		expect(second).toBeGreaterThan(first);
+		expect(third).toBeGreaterThan(second);
+
+		// 계정 첫 줄 다음의 7d 줄은 │ 가이드로 시작한다
+		expect(lines[first + 1]).toMatch(/^  │ +7d /);
+		// 계정 사이에는 빈 줄이 하나 들어간다 (provider 헤더 바로 다음 첫 계정 앞에는 없다)
+		expect(lines[second - 1]).toBe("");
+		expect(lines[third - 1]).toBe("");
+		expect(lines[first - 1]).toBe("  claude-sdk-oauth");
+		// 창이 없는 계정(n/a)도 마커를 단다
+		expect(lines.some((l) => l.startsWith("  ● xai"))).toBe(true);
+	});
+
+	test("어떤 줄도 터미널 폭을 넘지 않는다 (한글 라벨 포함)", () => {
+		const lines = renderFrame(
+			state([
+				row({ label: "아주아주긴한글계정이름입니다정말로" }),
+				row({ provider: "xai", slot: "default", label: "default", note: "사용 내역 GrokBuild 12% · GrokImagine 1% · 아주긴제품이름 0%" }),
+				row({ provider: "google", slot: "default", label: "google", status: "unsupported", detail: "사용량 API 없음", windows: [] }),
+			]),
+			60,
+		);
+		for (const line of lines) expect(displayWidth(strip(line))).toBeLessThanOrEqual(60);
+	});
+
+	test("note가 있는 계정은 막대 아래 │ 가이드 줄에 내역을 dim으로 붙인다", () => {
+		const lines = renderFrame(
+			state([
+				row({
+					provider: "xai",
+					label: "default",
+					windows: [{ label: "7d", kind: "weekly", remainingPercent: 87, resetsAt: NOW + 86_400_000 }],
+					note: "사용 내역 GrokBuild 12% · GrokImagine 1%",
+				}),
+			]),
+			120,
+		);
+		const plain = lines.map(strip);
+		const first = plain.findIndex((l) => l.startsWith("  ● default"));
+		expect(plain[first]).toContain("87%");
+		expect(plain[first + 1]).toMatch(/^  │ +사용 내역 GrokBuild 12% · GrokImagine 1%$/);
+		expect(lines[first + 1]).toContain("\u001B[90m사용 내역");
+	});
+
+	test("unsupported/expired/error는 막대 대신 사유를 보여준다", () => {
+		const lines = renderFrame(
+			state([
+				row({ provider: "xai", slot: "default", label: "xai", status: "unsupported", detail: "사용량 API 없음", windows: [] }),
+				row({ slot: "carol", label: "carol", status: "expired", detail: "omo에서 /login claude-sdk-oauth (이름: carol)", windows: [] }),
+				row({ slot: "broken", label: "broken", status: "error", detail: "HTTP 401", windows: [] }),
+			]),
+			100,
+		).map(strip);
+		const text = lines.join("\n");
+		expect(text).toContain("사용량 API 없음");
+		expect(text).toContain("/login claude-sdk-oauth");
+		expect(text).toContain("HTTP 401");
+		expect(text).not.toContain("%");
+	});
+
+	test("429로 이전 값을 유지한 계정은 막대 옆에 사유와 재시도 시각을 보여준다", () => {
+		const retryAt = NOW + 120_000;
+		const lines = renderFrame(
+			state([
+				row({ detail: "요청 제한 (HTTP 429)", retryAt }),
+				row({ slot: "bob", label: "bob", status: "error", detail: "요청 제한 (HTTP 429)", retryAt, windows: [] }),
+			]),
+			120,
+		).map(strip);
+		const kept = lines.find((l) => l.includes("alice")) ?? "";
+		const bare = lines.find((l) => l.includes("bob")) ?? "";
+		const clock = new Date(retryAt);
+		const stamp = `${String(clock.getHours()).padStart(2, "0")}:${String(clock.getMinutes()).padStart(2, "0")}`;
+		expect(kept).toContain("50%");
+		expect(kept).toContain(`요청 제한 (HTTP 429) · ${stamp} 재시도`);
+		expect(bare).toContain(`오류 · 요청 제한 (HTTP 429) · ${stamp} 재시도`);
+	});
+
+	test("키 안내와 마지막 갱신 시각이 항상 보인다", () => {
+		const lines = renderFrame(state([row({})]), 100).map(strip);
+		const text = lines.join("\n");
+		expect(text).toMatch(/\[r\]/);
+		expect(text).toMatch(/\[q\]/);
+		expect(text).toMatch(/\d\d:\d\d:\d\d/);
+	});
+
+	test("계정이 하나도 없으면 안내 문구를 보여준다", () => {
+		const text = renderFrame(state([]), 80).map(strip).join("\n");
+		expect(text).toContain("로그인된 계정이 없습니다");
+	});
+});
