@@ -194,6 +194,30 @@ describe("renderFrame", () => {
 		expect(text).toContain("carol (고정)");
 	});
 
+	test("잔여 감소로 감지된 계정도 ▶를 달되 근거(조회 시각·감소 폭)를 적고, 오래되면 '마지막 차감 감지'가 된다", () => {
+		const lines = renderFrame(
+			state([
+				row({ provider: "openai-codex", label: "ann", drained: { at: NOW - 60_000, percent: 3 } }),
+				row({ provider: "openai-codex", slot: "login-2", label: "dana", drained: { at: NOW - 25 * 60_000, percent: 1 } }),
+			]),
+			120,
+		).map(strip);
+		const active = lines.findIndex((l) => l.startsWith("  ▶ ann"));
+		expect(active).toBeGreaterThan(-1);
+		expect(lines[active + 1]).toMatch(/^  │ +사용 중 · 1분 전 조회에서 -3%$/);
+		const stale = lines.findIndex((l) => l.startsWith("  ● dana"));
+		expect(stale).toBeGreaterThan(-1);
+		expect(lines[stale + 1]).toMatch(/^  │ +마지막 차감 감지 25분 전$/);
+	});
+
+	test("pool-state 기록(lastUsedAt)이 있으면 잔여 감소 감지보다 우선한다", () => {
+		const text = renderFrame(state([row({ label: "carol", lastUsedAt: NOW - 30_000, drained: { at: NOW - 60_000, percent: 3 } })]), 120)
+			.map(strip)
+			.join("\n");
+		expect(text).toContain("사용 중 · 방금");
+		expect(text).not.toContain("-3%");
+	});
+
 	test("키 안내와 마지막 갱신 시각이 항상 보인다", () => {
 		const lines = renderFrame(state([row({})]), 100).map(strip);
 		const text = lines.join("\n");

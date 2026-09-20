@@ -119,6 +119,35 @@ describe("collectUsage · pool state", () => {
 	});
 });
 
+describe("collectUsage · 잔여 감소 감지 (pool 기록이 없는 provider)", () => {
+	const CODEX_AUTH = { "openai-codex": { type: "oauth", access: "tok-codex", refresh: "r", expires: future, accountId: "acc" } };
+	const codexBody = (used5h: number, used7d: number) => ({
+		plan_type: "team",
+		rate_limit: {
+			primary_window: { used_percent: used5h, limit_window_seconds: 18000, reset_at: 1789643871 },
+			secondary_window: { used_percent: used7d, limit_window_seconds: 604800, reset_at: 1790081482 },
+		},
+	});
+	const serving = (body: unknown): typeof fetch =>
+		(async () => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } })) as unknown as typeof fetch;
+
+	test("직전 조회보다 잔여가 줄면 감지 시각과 가장 큰 감소 폭이 붙는다", async () => {
+		const first = await collectUsage(CODEX_AUTH, { fetchImpl: serving(codexBody(40, 10)), now: NOW });
+		expect(find(first, "default").drained).toBeUndefined();
+		const second = await collectUsage(CODEX_AUTH, { fetchImpl: serving(codexBody(43, 11)), now: NOW + 150_000, previous: first });
+		expect(find(second, "default").drained).toEqual({ at: NOW + 150_000, percent: 3 });
+	});
+
+	test("리셋으로 잔여가 늘거나 그대로면 새로 감지하지 않고 직전 감지를 유지한다", async () => {
+		const first = await collectUsage(CODEX_AUTH, { fetchImpl: serving(codexBody(40, 10)), now: NOW });
+		const second = await collectUsage(CODEX_AUTH, { fetchImpl: serving(codexBody(43, 11)), now: NOW + 150_000, previous: first });
+		const reset = await collectUsage(CODEX_AUTH, { fetchImpl: serving(codexBody(0, 11)), now: NOW + 300_000, previous: second });
+		expect(find(reset, "default").drained).toEqual({ at: NOW + 150_000, percent: 3 });
+		const same = await collectUsage(CODEX_AUTH, { fetchImpl: serving(codexBody(0, 11)), now: NOW + 450_000, previous: reset });
+		expect(find(same, "default").drained).toEqual({ at: NOW + 150_000, percent: 3 });
+	});
+});
+
 describe("collectUsage · xai", () => {
 	const XAI_AUTH = { xai: { type: "oauth", access: "tok-xai", refresh: "r", expires: future } };
 	const XAI_BODY = {

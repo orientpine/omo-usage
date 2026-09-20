@@ -113,6 +113,21 @@ async function fetchOne(row: AccountRow, secret: Secret, options: CollectOptions
 	}
 }
 
+/**
+ * pool-state에 기록이 없는 provider(Codex·xAI)는 직전 조회와 잔여를 비교해 차감을 알아챈다.
+ * 잔여가 는 건 리셋이지 차감이 아니므로 감지하지 않고, 새 감지가 없으면 직전 감지를 그대로 넘긴다.
+ */
+function stampDrained(row: AccountRow, previous: AccountRow | undefined, now: number): AccountRow {
+	const before = new Map((previous?.windows ?? []).map((window) => [window.label, window.remainingPercent]));
+	let drop = 0;
+	for (const window of row.windows) {
+		const prior = before.get(window.label);
+		if (prior !== undefined && window.remainingPercent < prior) drop = Math.max(drop, prior - window.remainingPercent);
+	}
+	if (drop > 0) return { ...row, drained: { at: now, percent: drop } };
+	return previous?.drained === undefined ? row : { ...row, drained: previous.drained };
+}
+
 /** auth.json 전체를 훑어 계정마다 사용량을 병렬로 가져온다. 한 계정이 실패해도 나머지는 그대로 나온다. */
 export async function collectUsage(auth: unknown, options: CollectOptions = {}): Promise<AccountRow[]> {
 	const now = options.now ?? Date.now();
@@ -129,5 +144,6 @@ export async function collectUsage(auth: unknown, options: CollectOptions = {}):
 		return fetchOne(row, secret, { ...options, now }, prev);
 	};
 
-	return stampLastUsed(await Promise.all(rows.map(resolve)), options.poolState);
+	const resolved = await Promise.all(rows.map(resolve));
+	return stampLastUsed(resolved, options.poolState).map((row) => stampDrained(row, previous.get(accountKey(row.provider, row.slot)), now));
 }

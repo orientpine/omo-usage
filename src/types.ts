@@ -34,4 +34,6 @@ export interface AccountRow {
 	readonly lastUsedAt?: number;
 	/** auth.json이 이 슬롯을 고정해 둔 경우 (senpi가 이 계정을 우선 고른다) */
 	readonly pinned?: true;
+	/** pool 기록이 없는 provider용: 직전 조회 대비 잔여가 줄어든 것을 감지한 시각(epoch ms)과 폭(%p). TUI 갱신 사이에서만 생긴다 */
+	readonly drained?: { readonly at: number; readonly percent: number };
 }

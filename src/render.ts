@@ -144,12 +144,20 @@ export interface UsageStamp {
 /**
  * 계정 선택이 세션별 해시라 "지금 이 계정 하나"라고 단정할 수 없다. 그래서 단정 대신 마지막 차감 시각을 적고,
  * 최근이면 사용 중으로 부른다 — 숫자가 옆에 있으니 읽는 사람이 판단할 수 있다.
+ * pool 기록이 없는 provider(Codex·xAI)는 직전 조회 대비 잔여 감소가 근거라, 문구에 조회 시각과 감소 폭을 그대로 적는다.
  */
 export function usageStamp(row: AccountRow, now: number): UsageStamp {
-	if (row.lastUsedAt === undefined) return { text: "", active: false };
-	const age = Math.max(0, now - row.lastUsedAt);
-	const active = age <= ACTIVE_WINDOW_MS;
-	return { text: active ? `사용 중 · ${elapsed(age)}` : `마지막 사용 ${elapsed(age)}`, active };
+	if (row.lastUsedAt !== undefined) {
+		const age = Math.max(0, now - row.lastUsedAt);
+		const active = age <= ACTIVE_WINDOW_MS;
+		return { text: active ? `사용 중 · ${elapsed(age)}` : `마지막 사용 ${elapsed(age)}`, active };
+	}
+	if (row.drained !== undefined) {
+		const age = Math.max(0, now - row.drained.at);
+		const active = age <= ACTIVE_WINDOW_MS;
+		return { text: active ? `사용 중 · ${elapsed(age)} 조회에서 -${row.drained.percent}%` : `마지막 차감 감지 ${elapsed(age)}`, active };
+	}
+	return { text: "", active: false };
 }
 
 function levelColor(remaining: number): string {
