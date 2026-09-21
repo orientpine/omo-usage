@@ -1,7 +1,7 @@
 import type { AccountRow } from "./types.ts";
 import { buildRoster, USAGE_PROVIDERS, type UsageKind } from "./auth.ts";
 import { accountKey, secretsFrom, type Secret } from "./credentials.ts";
-import { parseClaudeUsage, parseCodexUsage, parseXaiUsage } from "./parse.ts";
+import { parseClaudeUsage, parseCodexUsage, parseKimiUsage, parseXaiUsage } from "./parse.ts";
 import { stampLastUsed } from "./pool.ts";
 
 const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
@@ -9,6 +9,8 @@ const CLAUDE_OAUTH_BETA = "oauth-2025-04-20";
 const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 /** Grok CLI `/usage`가 치는 엔드포인트. omo의 xai 토큰이 같은 OIDC 클라이언트로 발급돼 베어러만으로 200 (2026-09-18 실측). */
 const XAI_USAGE_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
+/** Kimi Code 구독 사용량. omo의 kimi-coding OAuth 토큰을 베어러로 그대로 받는다 (2026-09-21 실측). */
+const KIMI_USAGE_URL = "https://api.kimi.com/coding/v1/usages";
 const REQUEST_TIMEOUT_MS = 15_000;
 /** Anthropic usage 엔드포인트는 토큰당 마지막 성공 뒤 약 95초 동안 429를 돌려준다 (2026-09-18 실측). */
 export const RATE_LIMIT_COOLDOWN_MS = 120_000;
@@ -70,6 +72,11 @@ function requestFor(kind: UsageKind, secret: Secret, signal: AbortSignal): { url
 				url: XAI_USAGE_URL,
 				init: { headers: { Authorization: `Bearer ${secret.access}`, "User-Agent": "omo-usage/0.1" }, signal },
 			};
+		case "kimi":
+			return {
+				url: KIMI_USAGE_URL,
+				init: { headers: { Authorization: `Bearer ${secret.access}`, "User-Agent": "omo-usage/0.1" }, signal },
+			};
 	}
 }
 
@@ -99,6 +106,13 @@ async function fetchOne(row: AccountRow, secret: Secret, options: CollectOptions
 			const usage = parseXaiUsage(payload);
 			return usage.windows.length > 0
 				? { ...row, status: "ok", detail: null, windows: usage.windows, ...(usage.note !== null ? { note: usage.note } : {}) }
+				: { ...row, status: "error", detail: "응답에 사용량 창이 없음", windows: [] };
+		}
+
+		if (kind === "kimi") {
+			const windows = parseKimiUsage(payload);
+			return windows.length > 0
+				? { ...row, status: "ok", detail: null, windows }
 				: { ...row, status: "error", detail: "응답에 사용량 창이 없음", windows: [] };
 		}
 

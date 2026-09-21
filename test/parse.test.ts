@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseClaudeUsage, parseCodexUsage, parseXaiUsage } from "../src/parse.ts";
+import { parseClaudeUsage, parseCodexUsage, parseKimiUsage, parseXaiUsage } from "../src/parse.ts";
 
 /** 2026-09-18 cli-chat-proxy 실제 응답 (SuperGrok Plus, 통합 주간 풀) */
 const XAI_BODY = {
@@ -149,5 +149,51 @@ describe("parseXaiUsage", () => {
 	test("주간이 아닌 기간은 start/end 길이로 라벨을 만든다", () => {
 		const r = parseXaiUsage({ config: { currentPeriod: { type: "USAGE_PERIOD_TYPE_MONTHLY", start: "2026-09-01T00:00:00Z", end: "2026-10-01T00:00:00Z" }, creditUsagePercent: 40 } });
 		expect(r.windows).toEqual([{ label: "30d", kind: "other", remainingPercent: 60, resetsAt: Date.parse("2026-10-01T00:00:00Z") }]);
+	});
+});
+
+/** 2026-09-21 api.kimi.com 실제 응답 형태 (Kimi Code 구독) — proto3 JSON이라 int64가 문자열이다 */
+const KIMI_BODY = {
+	usage: { limit: "100", used: "7", remaining: "93", resetTime: "2026-09-27T16:35:17.353107Z" },
+	limits: [
+		{ window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" }, detail: { limit: "100", used: "2", remaining: "98", resetTime: "2026-09-21T09:35:17.353107Z" } },
+	],
+	usages: { limit_5h: { used_ratio: 0, reset_time: "2026-09-21T09:35:17Z" }, limit_7d: { used_ratio: 0, reset_time: "2026-09-27T16:35:17Z" } },
+};
+
+describe("parseKimiUsage", () => {
+	test("limits[]의 롤링 창과 usage의 주간 쿼터를 남은 비율로 바꾼다", () => {
+		const w = parseKimiUsage(KIMI_BODY);
+		expect(w.map((x) => x.label)).toEqual(["5h", "7d"]);
+		expect(w[0]).toEqual({ label: "5h", kind: "session", remainingPercent: 98, resetsAt: Date.parse("2026-09-21T09:35:17.353107Z") });
+		expect(w[1]).toEqual({ label: "7d", kind: "weekly", remainingPercent: 93, resetsAt: Date.parse("2026-09-27T16:35:17.353107Z") });
+	});
+
+	test("used_ratio는 뭉개진 값이라 쓰지 않고 카운트만 읽는다", () => {
+		// KIMI_BODY의 used_ratio는 0이지만 실제 사용은 7/100 — 100%로 읽으면 틀린다
+		expect(parseKimiUsage(KIMI_BODY).find((x) => x.label === "7d")?.remainingPercent).toBe(93);
+	});
+
+	test("remaining이 없으면 limit-used로 계산한다", () => {
+		const w = parseKimiUsage({ usage: { limit: "100", used: "30", resetTime: "2026-09-27T00:00:00Z" } });
+		expect(w[0]?.remainingPercent).toBe(70);
+	});
+
+	test("빈/깨진 응답에서 숫자를 지어내지 않는다", () => {
+		expect(parseKimiUsage({})).toEqual([]);
+		expect(parseKimiUsage(null)).toEqual([]);
+		expect(parseKimiUsage({ detail: "Unauthorized" })).toEqual([]);
+		expect(parseKimiUsage({ usage: { limit: "0", remaining: "0" } })).toEqual([]);
+		expect(parseKimiUsage({ usage: { remaining: "93" } })).toEqual([]);
+		expect(parseKimiUsage({ limits: [{ window: { duration: 300, timeUnit: "TIME_UNIT_UNKNOWN" }, detail: { limit: "100", remaining: "98" } }] })).toEqual([]);
+		expect(parseKimiUsage({ limits: [{ window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" }, detail: { limit: "abc", remaining: "98" } }] })).toEqual([]);
+	});
+
+	test("limits[]의 창이 usage와 라벨이 겹치면 먼저 온 창 하나만 그린다", () => {
+		const w = parseKimiUsage({
+			usage: { limit: "100", remaining: "50", resetTime: "2026-09-27T00:00:00Z" },
+			limits: [{ window: { duration: 7, timeUnit: "TIME_UNIT_DAY" }, detail: { limit: "100", remaining: "80", resetTime: "2026-09-27T00:00:00Z" } }],
+		});
+		expect(w).toEqual([{ label: "7d", kind: "weekly", remainingPercent: 80, resetsAt: Date.parse("2026-09-27T00:00:00Z") }]);
 	});
 });

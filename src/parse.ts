@@ -153,3 +153,72 @@ export function parseXaiUsage(payload: unknown): XaiUsage {
 
 	return { windows: window ? [window] : [], note: parts.length > 0 ? `사용 내역 ${parts.join(" · ")}` : null };
 }
+
+/** proto3 JSON은 int64를 문자열로 본다("100"). 문자없이 오는 숫자와 문자열 모두 읽되, 해석 불가면 null이다. */
+function numberOrString(value: unknown): number | null {
+	if (typeof value === "number") return Number.isFinite(value) ? value : null;
+	if (typeof value === "string" && value.trim() !== "") {
+		const parsed = Number(value);
+		return Number.isFinite(parsed) ? parsed : null;
+	}
+	return null;
+}
+
+/** duration + timeUnit(TIME_UNIT_MINUTE 등)을 초로 환산한다. 모르는 단위는 null. */
+function windowSeconds(duration: unknown, timeUnit: unknown): number | null {
+	const value = numberOrString(duration);
+	if (value === null || value <= 0) return null;
+	const factor = timeUnit === "TIME_UNIT_MINUTE" ? 60 : timeUnit === "TIME_UNIT_HOUR" ? 3_600 : timeUnit === "TIME_UNIT_DAY" ? 86_400 : timeUnit === "TIME_UNIT_SECOND" ? 1 : null;
+	return factor === null ? null : value * factor;
+}
+
+/** limit/remaining(없으면 limit-used) 카운트에서 남은 비율을 만든다. limit이 0이면 나눌 수 없으니 null. */
+function remainingPercentFromCounts(detail: Record<string, unknown>): number | null {
+	const limit = numberOrString(detail["limit"]);
+	if (limit === null || limit <= 0) return null;
+	const remaining = numberOrString(detail["remaining"]);
+	const used = numberOrString(detail["used"]);
+	const left = remaining ?? (used !== null ? limit - used : null);
+	return left === null ? null : Math.round((Math.min(limit, Math.max(0, left)) / limit) * 100);
+}
+
+/**
+ * GET https://api.kimi.com/coding/v1/usages 응답 파싱 (Kimi Code 구독, 2026-09-21 실측).
+ * limits[]는 롤링 창(300분=5h), usage는 주간 쿼터다. usages.limit_*.used_ratio는 정수로 몸개진 값
+ * (7% 사용인데 0으로 옴)이라 쓰지 않고 실제 카운트(remaining/limit)만 읽는다.
+ * limits[]에 주간 길이 창이 있으면 usage와 라벨이 겹치므로 먼저 온 창 하나만 그린다.
+ */
+export function parseKimiUsage(payload: unknown): UsageWindow[] {
+	const root = record(payload);
+	if (!root) return [];
+
+	const windows: UsageWindow[] = [];
+	const seen = new Set<string>();
+
+	const limits = root["limits"];
+	if (Array.isArray(limits)) {
+		for (const raw of limits) {
+			const item = record(raw);
+			const detail = record(item?.["detail"]);
+			const win = record(item?.["window"]);
+			if (!detail || !win) continue;
+			const seconds = windowSeconds(win["duration"], win["timeUnit"]);
+			if (seconds === null) continue;
+			const remainingPercent = remainingPercentFromCounts(detail);
+			if (remainingPercent === null) continue;
+			const label = seconds === FIVE_HOURS_SECONDS ? "5h" : seconds === WEEK_SECONDS ? "7d" : durationLabel(seconds);
+			if (seen.has(label)) continue;
+			seen.add(label);
+			const kind: WindowKind = seconds === FIVE_HOURS_SECONDS ? "session" : seconds === WEEK_SECONDS ? "weekly" : "other";
+			windows.push({ label, kind, remainingPercent, resetsAt: isoToEpoch(detail["resetTime"]) });
+		}
+	}
+
+	const usage = record(root["usage"]);
+	if (usage && !seen.has("7d")) {
+		const remainingPercent = remainingPercentFromCounts(usage);
+		if (remainingPercent !== null) windows.push({ label: "7d", kind: "weekly", remainingPercent, resetsAt: isoToEpoch(usage["resetTime"]) });
+	}
+
+	return windows;
+}
