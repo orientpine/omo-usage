@@ -5,12 +5,13 @@ export const USAGE_PROVIDERS = {
 	"claude-sdk-oauth": "claude",
 	"openai-codex": "codex",
 	xai: "xai",
+	"kimi-coding": "kimi",
 } as const;
 
 export type UsageKind = (typeof USAGE_PROVIDERS)[keyof typeof USAGE_PROVIDERS];
 
 /** 화면에 고정으로 쓰는 provider 순서. 나머지는 이름순으로 뒤에 붙는다. */
-const PROVIDER_ORDER = ["claude-sdk-oauth", "openai-codex", "xai", "google"];
+const PROVIDER_ORDER = ["claude-sdk-oauth", "openai-codex", "xai", "kimi-coding", "google"];
 
 function record(value: unknown): Record<string, unknown> | null {
 	return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;

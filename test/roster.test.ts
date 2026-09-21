@@ -30,6 +30,7 @@ const AUTH = {
 		],
 	},
 	xai: { type: "oauth", access: "a", refresh: "r", expires: future },
+	"kimi-coding": { type: "oauth", access: "a", refresh: "r", expires: future },
 };
 
 describe("buildRoster", () => {
@@ -42,6 +43,7 @@ describe("buildRoster", () => {
 			"openai-codex/default",
 			"openai-codex/login-2",
 			"xai/default",
+			"kimi-coding/default",
 			"google/default",
 		]);
 	});

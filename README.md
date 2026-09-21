@@ -167,6 +167,7 @@ auth.json은 읽기 전용으로 열고, 토큰은 fetch 호출에만 쓴다. �
 | `claude-sdk-oauth` | 계정별 5h / 7d / 모델별 주간 한도 | `GET https://api.anthropic.com/api/oauth/usage` (`anthropic-beta: oauth-2025-04-20`) |
 | `openai-codex` | 계정별 5h / 7d + 플랜 | `GET https://chatgpt.com/backend-api/wham/usage` (`ChatGPT-Account-Id`는 액세스 토큰 JWT에서 추출) |
 | `xai` | 주간 크레딧 풀 잔여 + 제품별 내역 | `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits` — Grok CLI `/usage`와 같은 엔드포인트. omo의 xai 토큰이 Grok CLI와 같은 OIDC 클라이언트로 발급돼 베어러만으로 통과 |
+| `kimi-coding` | 계정별 5h / 7d | `GET https://api.kimi.com/coding/v1/usages` — omo의 kimi 구독 OAuth 토큰(Kimi CLI와 같은 device flow로 발급)을 베어러로 그대로 사용 |
 | `google` | — (`n/a`) | 공개된 사용량 API 없음 |
 
 ## 설계 원칙
@@ -186,7 +187,7 @@ auth.json은 읽기 전용으로 열고, 토큰은 fetch 호출에만 쓴다. �
 - **xAI 응답은 proto3 JSON이라 0은 키가 빠진다.** `config.currentPeriod`가 있는데 `creditUsagePercent`만 없으면 0(잔여 100%)으로 읽고, `currentPeriod` 자체가 없으면 크레딧 응답이 아니므로 `오류`로 둔다. `{"val":0}`은 `{}`로 온다.
 - **Anthropic 429 창은 토큰당 약 95초**(2026-09-18 실측). `Retry-After`가 있으면 그 값을, 없으면 120초를 쿨다운으로 쓴다.
 - **xAI 슬롯의 라벨은 `default`다.** senpi가 xai에는 displayName을 저장하지 않는다.
-- **차감 기록은 `credential-pool-state.json`에만 있다.** `providers.<provider>.lanes.stored.slots.<슬롯>.lastSuccessAt`이 요청 성공마다 갱신된다. `lease`는 half-open 프로브 잠금(30초)이라 사용 중 신호가 아니다. 옛 슬롯 이름·계정 id 키가 잔재로 남아 있어 현재 auth.json 슬롯 이름으로만 대조하고, Codex 슬롯은 이 파일에 아예 없다(xai는 provider 항목 자체가 없다). 그래서 이 둘은 TUI 갱신 사이의 잔여 감소로 대신한다 — `collect.ts`가 직전 결과의 `remainingPercent`를 창 라벨별로 비교해 줄어든 최대 폭을 `drained`로 남기고, 잔여 증가(리셋)는 감지하지 않으며 새 감지가 없으면 직전 감지를 유지한다.
+- **차감 기록은 `credential-pool-state.json`에만 있다.** `providers.<provider>.lanes.stored.slots.<슬롯>.lastSuccessAt`이 요청 성공마다 갱신된다. `lease`는 half-open 프로브 잠금(30초)이라 사용 중 신호가 아니다. 옛 슬롯 이름·계정 id 키가 잔재로 남아 있어 현재 auth.json 슬롯 이름으로만 대조하고, Codex·kimi-coding 슬롯은 이 파일에 아예 없다(xai는 provider 항목 자체가 없다). 그래서 이 셋은 TUI 갱신 사이의 잔여 감소로 대신한다 — `collect.ts`가 직전 결과의 `remainingPercent`를 창 라벨별로 비교해 줄어든 최대 폭을 `drained`로 남기고, 잔여 증가(리셋)는 감지하지 않으며 새 감지가 없으면 직전 감지를 유지한다.
 
 </details>
 

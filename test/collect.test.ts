@@ -190,3 +190,39 @@ describe("collectUsage · xai", () => {
 		expect(xai.note).toBeUndefined();
 	});
 });
+
+describe("collectUsage · kimi-coding", () => {
+	const KIMI_AUTH = { "kimi-coding": { type: "oauth", access: "tok-kimi", refresh: "r", expires: future } };
+	const KIMI_BODY = {
+		usage: { limit: "100", used: "7", remaining: "93", resetTime: "2026-09-27T16:35:17Z" },
+		limits: [{ window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" }, detail: { limit: "100", used: "2", remaining: "98", resetTime: "2026-09-21T09:35:17Z" } }],
+	};
+
+	function kimiFetch(body: unknown, status = 200): { fetchImpl: typeof fetch; seen: { url: string; headers: Headers }[] } {
+		const seen: { url: string; headers: Headers }[] = [];
+		const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+			seen.push({ url: String(url), headers: new Headers(init?.headers) });
+			return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+		}) as unknown as typeof fetch;
+		return { fetchImpl, seen };
+	}
+
+	test("coding/v1/usages 엔드포인트를 베어러로 부르고 5h/7d 창을 만든다", async () => {
+		const { fetchImpl, seen } = kimiFetch(KIMI_BODY);
+		const rows = await collectUsage(KIMI_AUTH, { fetchImpl, now: NOW });
+		expect(seen.map((s) => s.url)).toEqual(["https://api.kimi.com/coding/v1/usages"]);
+		expect(seen[0]?.headers.get("authorization")).toBe("Bearer tok-kimi");
+		const kimi = find(rows, "default");
+		expect(kimi.provider).toBe("kimi-coding");
+		expect(kimi.status).toBe("ok");
+		expect(kimi.windows.map((w) => w.label)).toEqual(["5h", "7d"]);
+		expect(kimi.windows.find((w) => w.label === "7d")?.remainingPercent).toBe(93);
+	});
+
+	test("사용량 창이 없는 응답이면 숫자를 지어내지 않고 오류로 표시한다", async () => {
+		const rows = await collectUsage(KIMI_AUTH, { fetchImpl: kimiFetch({ usages: {} }).fetchImpl, now: NOW });
+		const kimi = find(rows, "default");
+		expect(kimi.status).toBe("error");
+		expect(kimi.windows).toEqual([]);
+	});
+});
