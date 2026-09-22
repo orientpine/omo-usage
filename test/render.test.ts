@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { buildRoster } from "../src/auth.ts";
 import { displayWidth, renderFrame, type AppState } from "../src/render.ts";
 import type { AccountRow } from "../src/types.ts";
 
@@ -65,7 +66,7 @@ describe("renderFrame", () => {
 				row({ windows: two }),
 				row({ slot: "bob", label: "bob", windows: two }),
 				row({ slot: "carol", label: "carol", windows: two }),
-				row({ provider: "xai", slot: "default", label: "xai", status: "unsupported", detail: "사용량 API 없음", windows: [] }),
+				row({ provider: "xai", slot: "default", label: "xai", status: "unsupported", detail: "no usage API", windows: [] }),
 			]),
 			120,
 		).map(strip);
@@ -91,8 +92,8 @@ describe("renderFrame", () => {
 		const lines = renderFrame(
 			state([
 				row({ label: "아주아주긴한글계정이름입니다정말로" }),
-				row({ provider: "xai", slot: "default", label: "default", note: "사용 내역 GrokBuild 12% · GrokImagine 1% · 아주긴제품이름 0%" }),
-				row({ provider: "google", slot: "default", label: "google", status: "unsupported", detail: "사용량 API 없음", windows: [] }),
+				row({ provider: "xai", slot: "default", label: "default", note: "breakdown GrokBuild 12% · GrokImagine 1% · 아주긴제품이름 0%" }),
+				row({ provider: "google", slot: "default", label: "google", status: "unsupported", detail: "no usage API", windows: [] }),
 			]),
 			60,
 		);
@@ -106,7 +107,7 @@ describe("renderFrame", () => {
 					provider: "xai",
 					label: "default",
 					windows: [{ label: "7d", kind: "weekly", remainingPercent: 87, resetsAt: NOW + 86_400_000 }],
-					note: "사용 내역 GrokBuild 12% · GrokImagine 1%",
+					note: "breakdown GrokBuild 12% · GrokImagine 1%",
 				}),
 			]),
 			120,
@@ -114,21 +115,21 @@ describe("renderFrame", () => {
 		const plain = lines.map(strip);
 		const first = plain.findIndex((l) => l.startsWith("  ● default"));
 		expect(plain[first]).toContain("87%");
-		expect(plain[first + 1]).toMatch(/^  │ +사용 내역 GrokBuild 12% · GrokImagine 1%$/);
-		expect(lines[first + 1]).toContain("\u001B[90m사용 내역");
+		expect(plain[first + 1]).toMatch(/^  │ +breakdown GrokBuild 12% · GrokImagine 1%$/);
+		expect(lines[first + 1]).toContain("\u001B[90mbreakdown");
 	});
 
 	test("unsupported/expired/error는 막대 대신 사유를 보여준다", () => {
 		const lines = renderFrame(
 			state([
-				row({ provider: "xai", slot: "default", label: "xai", status: "unsupported", detail: "사용량 API 없음", windows: [] }),
-				row({ slot: "carol", label: "carol", status: "expired", detail: "omo에서 /login claude-sdk-oauth (이름: carol)", windows: [] }),
+				row({ provider: "xai", slot: "default", label: "xai", status: "unsupported", detail: "no usage API", windows: [] }),
+				row({ slot: "carol", label: "carol", status: "expired", detail: "run /login claude-sdk-oauth in omo (name: carol)", windows: [] }),
 				row({ slot: "broken", label: "broken", status: "error", detail: "HTTP 401", windows: [] }),
 			]),
 			100,
 		).map(strip);
 		const text = lines.join("\n");
-		expect(text).toContain("사용량 API 없음");
+		expect(text).toContain("no usage API");
 		expect(text).toContain("/login claude-sdk-oauth");
 		expect(text).toContain("HTTP 401");
 		expect(text).not.toContain("%");
@@ -138,8 +139,8 @@ describe("renderFrame", () => {
 		const retryAt = NOW + 120_000;
 		const lines = renderFrame(
 			state([
-				row({ detail: "요청 제한 (HTTP 429)", retryAt }),
-				row({ slot: "bob", label: "bob", status: "error", detail: "요청 제한 (HTTP 429)", retryAt, windows: [] }),
+				row({ detail: "rate limited (HTTP 429)", retryAt }),
+				row({ slot: "bob", label: "bob", status: "error", detail: "rate limited (HTTP 429)", retryAt, windows: [] }),
 			]),
 			120,
 		).map(strip);
@@ -148,8 +149,8 @@ describe("renderFrame", () => {
 		const clock = new Date(retryAt);
 		const stamp = `${String(clock.getHours()).padStart(2, "0")}:${String(clock.getMinutes()).padStart(2, "0")}`;
 		expect(kept).toContain("50%");
-		expect(kept).toContain(`요청 제한 (HTTP 429) · ${stamp} 재시도`);
-		expect(bare).toContain(`오류 · 요청 제한 (HTTP 429) · ${stamp} 재시도`);
+		expect(kept).toContain(`rate limited (HTTP 429) · retry ${stamp}`);
+		expect(bare).toContain(`error · rate limited (HTTP 429) · retry ${stamp}`);
 	});
 
 	test("최근 차감된 계정은 ▶ 마커와 '사용 중'을, 나머지는 '마지막 사용'을 단다", () => {
@@ -158,40 +159,40 @@ describe("renderFrame", () => {
 				row({ label: "carol", lastUsedAt: NOW - 30_000 }),
 				row({ slot: "alice", label: "alice", lastUsedAt: NOW - 3 * 3_600_000 }),
 				row({ slot: "idle", label: "idle" }),
-				row({ slot: "gone", label: "gone", status: "expired", detail: "senpi가 사용 시 자동 갱신 · 재로그인 불필요", windows: [], lastUsedAt: NOW - 14 * 3_600_000 }),
+				row({ slot: "gone", label: "gone", status: "expired", detail: "senpi refreshes it on next use · no re-login", windows: [], lastUsedAt: NOW - 14 * 3_600_000 }),
 			]),
 			120,
 		).map(strip);
 
 		const active = lines.findIndex((l) => l.startsWith("  ▶ carol"));
 		expect(active).toBeGreaterThan(-1);
-		expect(lines[active + 1]).toMatch(/^  │ +사용 중 · 방금$/);
+		expect(lines[active + 1]).toMatch(/^  │ +in use · just now$/);
 
 		const stale = lines.findIndex((l) => l.startsWith("  ● alice"));
 		expect(stale).toBeGreaterThan(-1);
-		expect(lines[stale + 1]).toMatch(/^  │ +마지막 사용 3시간 전$/);
+		expect(lines[stale + 1]).toMatch(/^  │ +last used 3h ago$/);
 
 		// lastUsedAt이 없으면 아무 말도 만들지 않는다
 		const idle = lines.findIndex((l) => l.startsWith("  ● idle"));
-		expect(lines[idle + 1] ?? "").not.toContain("사용");
+		expect(lines[idle + 1] ?? "").not.toMatch(/in use|last used/);
 
 		const gone = lines.findIndex((l) => l.startsWith("  ● gone"));
 		expect(gone).toBeGreaterThan(-1);
-		expect(lines[gone + 1]).toMatch(/^  │ +마지막 사용 14시간 전$/);
+		expect(lines[gone + 1]).toMatch(/^  │ +last used 14h ago$/);
 	});
 
 	test("사용 중 판정은 10분 경계로 갈린다", () => {
 		const stampOn = (ago: number) =>
 			renderFrame(state([row({ label: "x", lastUsedAt: NOW - ago })]), 120)
 				.map(strip)
-				.find((l) => /^  │ .*(사용 중|마지막 사용)/.test(l)) ?? "";
-		expect(stampOn(9 * 60_000 + 59_000)).toContain("사용 중");
-		expect(stampOn(10 * 60_000 + 1_000)).toContain("마지막 사용");
+				.find((l) => /^  │ .*(in use|last used)/.test(l)) ?? "";
+		expect(stampOn(9 * 60_000 + 59_000)).toContain("in use");
+		expect(stampOn(10 * 60_000 + 1_000)).toContain("last used");
 	});
 
 	test("고정된 계정은 제목에 (고정)이 붙는다", () => {
 		const text = renderFrame(state([row({ label: "carol", pinned: true })]), 120).map(strip).join("\n");
-		expect(text).toContain("carol (고정)");
+		expect(text).toContain("carol (pinned)");
 	});
 
 	test("잔여 감소로 감지된 계정도 ▶를 달되 근거(조회 시각·감소 폭)를 적고, 오래되면 '마지막 차감 감지'가 된다", () => {
@@ -204,17 +205,17 @@ describe("renderFrame", () => {
 		).map(strip);
 		const active = lines.findIndex((l) => l.startsWith("  ▶ ann"));
 		expect(active).toBeGreaterThan(-1);
-		expect(lines[active + 1]).toMatch(/^  │ +사용 중 · 1분 전 조회에서 -3%$/);
+		expect(lines[active + 1]).toMatch(/^  │ +in use · -3% since poll 1m ago$/);
 		const stale = lines.findIndex((l) => l.startsWith("  ● dana"));
 		expect(stale).toBeGreaterThan(-1);
-		expect(lines[stale + 1]).toMatch(/^  │ +마지막 차감 감지 25분 전$/);
+		expect(lines[stale + 1]).toMatch(/^  │ +last drain seen 25m ago$/);
 	});
 
 	test("pool-state 기록(lastUsedAt)이 있으면 잔여 감소 감지보다 우선한다", () => {
 		const text = renderFrame(state([row({ label: "carol", lastUsedAt: NOW - 30_000, drained: { at: NOW - 60_000, percent: 3 } })]), 120)
 			.map(strip)
 			.join("\n");
-		expect(text).toContain("사용 중 · 방금");
+		expect(text).toContain("in use · just now");
 		expect(text).not.toContain("-3%");
 	});
 
@@ -226,8 +227,19 @@ describe("renderFrame", () => {
 		expect(text).toMatch(/\d\d:\d\d:\d\d/);
 	});
 
+	test("만료 사유는 80칸 프레임에서도 잘리지 않는다", () => {
+		const expired = buildRoster({ "claude-sdk-oauth": { type: "oauth", access: "a", expires: NOW - 1, accounts: [{ name: "carol", access: "a", expires: NOW - 1 }] } }, NOW)[0];
+		const detail = expired?.detail ?? "";
+		expect(detail.length).toBeGreaterThan(0);
+		// README 데모와 같은 조건: 같은 프레임에 "alice (pinned)"(14칸) 제목이 있어 제목 열이 넓어진다
+		const line = renderFrame(state([row({ label: "alice", pinned: true }), expired as AccountRow]), 80)
+			.map(strip)
+			.find((l) => l.includes("carol")) ?? "";
+		expect(line).toContain(detail);
+	});
+
 	test("계정이 하나도 없으면 안내 문구를 보여준다", () => {
 		const text = renderFrame(state([]), 80).map(strip).join("\n");
-		expect(text).toContain("로그인된 계정이 없습니다");
+		expect(text).toContain("No accounts logged in");
 	});
 });

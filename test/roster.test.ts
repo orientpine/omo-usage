@@ -67,6 +67,7 @@ describe("buildRoster", () => {
 		expect(google?.status).toBe("unsupported");
 		expect(google?.windows).toEqual([]);
 		expect(google?.expiresAt).toBeNull();
+		expect(google?.detail).toBe("API key · no usage API");
 	});
 
 	test("xai는 accounts 배열 없는 단일 OAuth 자격증명이라 default 슬롯 하나로 조회 대상이 된다", () => {
@@ -102,7 +103,8 @@ describe("buildRoster", () => {
 		);
 		const detail = (slot: string) => rows.find((r) => r.slot === slot)?.detail ?? "";
 		expect(rows.map((r) => r.status)).toEqual(["expired", "expired", "expired"]);
-		expect(detail("dead")).toContain("/login claude-sdk-oauth");
+		expect(detail("dead")).toBe("refresh failed · run /login claude-sdk-oauth in omo (name: dead)");
+		expect(detail("idle")).toBe("senpi refreshes it on next use · no re-login");
 		expect(detail("limited")).not.toContain("/login");
 		expect(detail("idle")).not.toContain("/login");
 	});

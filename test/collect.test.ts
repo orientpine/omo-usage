@@ -45,7 +45,7 @@ describe("collectUsage · 429 처리", () => {
 		const bob = find(rows, "bob");
 		expect(bob.status).toBe("error");
 		expect(bob.windows).toEqual([]);
-		expect(bob.detail).toContain("요청 제한");
+		expect(bob.detail).toContain("rate limited");
 		expect(bob.retryAt).toBe(NOW + RATE_LIMIT_COOLDOWN_MS);
 		expect(find(rows, "default").status).toBe("ok");
 	});
@@ -57,7 +57,7 @@ describe("collectUsage · 429 처리", () => {
 		const bob = find(rows, "bob");
 		expect(bob.status).toBe("ok");
 		expect(bob.windows).toEqual(find(first, "bob").windows);
-		expect(bob.detail).toContain("요청 제한");
+		expect(bob.detail).toContain("rate limited");
 		expect(bob.retryAt).toBe(NOW + 60_000 + RATE_LIMIT_COOLDOWN_MS);
 	});
 
@@ -107,7 +107,7 @@ describe("collectUsage · pool state", () => {
 			poolState: POOL,
 		});
 		const kept = find(rows, "default");
-		expect(kept.detail).toContain("요청 제한");
+		expect(kept.detail).toContain("rate limited");
 		expect(kept.lastUsedAt).toBe(NOW - 30_000);
 	});
 
@@ -186,6 +186,7 @@ describe("collectUsage · xai", () => {
 		const rows = await collectUsage(XAI_AUTH, { fetchImpl: xaiFetch({ config: null }).fetchImpl, now: NOW });
 		const xai = find(rows, "default");
 		expect(xai.status).toBe("error");
+		expect(xai.detail).toBe("no usage windows in response");
 		expect(xai.windows).toEqual([]);
 		expect(xai.note).toBeUndefined();
 	});
@@ -223,6 +224,7 @@ describe("collectUsage · kimi-coding", () => {
 		const rows = await collectUsage(KIMI_AUTH, { fetchImpl: kimiFetch({ usages: {} }).fetchImpl, now: NOW });
 		const kimi = find(rows, "default");
 		expect(kimi.status).toBe("error");
+		expect(kimi.detail).toBe("no usage windows in response");
 		expect(kimi.windows).toEqual([]);
 	});
 });

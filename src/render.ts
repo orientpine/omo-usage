@@ -106,16 +106,16 @@ function stampOf(ms: number): string {
 
 function relative(ms: number): string {
 	const minutes = Math.round(ms / 60_000);
-	if (minutes < 1) return "곧";
-	if (minutes < 60) return `${minutes}분 뒤`;
+	if (minutes < 1) return "soon";
+	if (minutes < 60) return `in ${minutes}m`;
 	const hours = Math.floor(minutes / 60);
 	if (hours < 24) {
 		const rest = minutes % 60;
-		return rest > 0 ? `${hours}시간 ${rest}분 뒤` : `${hours}시간 뒤`;
+		return rest > 0 ? `in ${hours}h ${rest}m` : `in ${hours}h`;
 	}
 	const days = Math.floor(hours / 24);
 	const restHours = hours % 24;
-	return restHours > 0 ? `${days}일 ${restHours}시간 뒤` : `${days}일 뒤`;
+	return restHours > 0 ? `in ${days}d ${restHours}h` : `in ${days}d`;
 }
 
 function formatReset(resetsAt: number | null, now: number): string {
@@ -125,15 +125,15 @@ function formatReset(resetsAt: number | null, now: number): string {
 	const sameDay = date.getFullYear() === today.getFullYear() && date.getMonth() === today.getMonth() && date.getDate() === today.getDate();
 	const stamp = sameDay ? clock(date) : `${date.getMonth() + 1}/${date.getDate()} ${clock(date)}`;
 	const diff = resetsAt - now;
-	return diff <= 0 ? `${stamp} · 초기화됨` : `${stamp} · ${relative(diff)}`;
+	return diff <= 0 ? `${stamp} · reset` : `${stamp} · ${relative(diff)}`;
 }
 
 function elapsed(ms: number): string {
 	const minutes = Math.floor(ms / 60_000);
-	if (minutes < 1) return "방금";
-	if (minutes < 60) return `${minutes}분 전`;
+	if (minutes < 1) return "just now";
+	if (minutes < 60) return `${minutes}m ago`;
 	const hours = Math.floor(minutes / 60);
-	return hours < 24 ? `${hours}시간 전` : `${Math.floor(hours / 24)}일 전`;
+	return hours < 24 ? `${hours}h ago` : `${Math.floor(hours / 24)}d ago`;
 }
 
 export interface UsageStamp {
@@ -150,12 +150,12 @@ export function usageStamp(row: AccountRow, now: number): UsageStamp {
 	if (row.lastUsedAt !== undefined) {
 		const age = Math.max(0, now - row.lastUsedAt);
 		const active = age <= ACTIVE_WINDOW_MS;
-		return { text: active ? `사용 중 · ${elapsed(age)}` : `마지막 사용 ${elapsed(age)}`, active };
+		return { text: active ? `in use · ${elapsed(age)}` : `last used ${elapsed(age)}`, active };
 	}
 	if (row.drained !== undefined) {
 		const age = Math.max(0, now - row.drained.at);
 		const active = age <= ACTIVE_WINDOW_MS;
-		return { text: active ? `사용 중 · ${elapsed(age)} 조회에서 -${row.drained.percent}%` : `마지막 차감 감지 ${elapsed(age)}`, active };
+		return { text: active ? `in use · -${row.drained.percent}% since poll ${elapsed(age)}` : `last drain seen ${elapsed(age)}`, active };
 	}
 	return { text: "", active: false };
 }
@@ -172,12 +172,12 @@ function bar(remaining: number, width: number): { filled: string; empty: string 
 }
 
 function retryNote(row: AccountRow): string {
-	return row.retryAt === undefined ? "" : ` · ${clock(new Date(row.retryAt))} 재시도`;
+	return row.retryAt === undefined ? "" : ` · retry ${clock(new Date(row.retryAt))}`;
 }
 
 function statusText(row: AccountRow): string {
 	const label =
-		row.status === "expired" ? "만료" : row.status === "error" ? "오류" : row.status === "unsupported" ? "n/a" : row.status === "loading" ? "조회 중…" : "";
+		row.status === "expired" ? "expired" : row.status === "error" ? "error" : row.status === "unsupported" ? "n/a" : row.status === "loading" ? "loading…" : "";
 	return (row.detail ? `${label} · ${row.detail}` : label) + retryNote(row);
 }
 
@@ -187,17 +187,17 @@ function staleNote(row: AccountRow): string {
 }
 
 function accountTitle(row: AccountRow): string {
-	return `${row.label}${row.plan ? ` (${row.plan})` : ""}${row.pinned ? " (고정)" : ""}`;
+	return `${row.label}${row.plan ? ` (${row.plan})` : ""}${row.pinned ? " (pinned)" : ""}`;
 }
 
 export function renderFrame(state: AppState, cols: number): string[] {
 	const width = Math.max(40, cols);
 	const lines: string[] = [];
 
-	const stamp = state.updatedAt === null ? "조회 전" : stampOf(state.updatedAt);
+	const stamp = state.updatedAt === null ? "not yet" : stampOf(state.updatedAt);
 	const ok = state.rows.filter((r) => r.status === "ok").length;
-	const head = "  omo-ai 계정 사용량";
-	const meta = `계정 ${state.rows.length} · 정상 ${ok} · 갱신 ${stamp}${state.refreshing ? " · 조회 중…" : ""}  `;
+	const head = "  omo-ai account usage";
+	const meta = `accounts ${state.rows.length} · ok ${ok} · updated ${stamp}${state.refreshing ? " · loading…" : ""}  `;
 	const gap = Math.max(1, width - displayWidth(head) - displayWidth(meta));
 
 	lines.push("");
@@ -208,7 +208,7 @@ export function renderFrame(state: AppState, cols: number): string[] {
 
 	if (state.rows.length === 0) {
 		lines.push("");
-		lines.push(compose([{ t: "  로그인된 계정이 없습니다. omo TUI에서 /login 으로 먼저 로그인하세요.", c: YELLOW }], width));
+		lines.push(compose([{ t: "  No accounts logged in. Run /login in the omo TUI first.", c: YELLOW }], width));
 	}
 
 	const titleWidth = Math.min(24, Math.max(12, ...state.rows.map((r) => displayWidth(accountTitle(r)))));
@@ -273,6 +273,6 @@ export function renderFrame(state: AppState, cols: number): string[] {
 	}
 
 	lines.push("");
-	lines.push(compose([{ t: "  [r] 새로고침   [q] 종료", c: DIM }], width));
+	lines.push(compose([{ t: "  [r] refresh   [q] quit", c: DIM }], width));
 	return lines;
 }

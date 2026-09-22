@@ -113,7 +113,7 @@ export function parseCodexUsage(payload: unknown, now: number = Date.now()): Cod
 
 export interface XaiUsage {
 	readonly windows: UsageWindow[];
-	/** 같은 크레딧 풀에서 제품별로 쓴 몫 (예: "사용 내역 GrokBuild 12% · GrokImagine 1%"). 없으면 null */
+	/** 같은 크레딧 풀에서 제품별로 쓴 몫 (예: "breakdown GrokBuild 12% · GrokImagine 1%"). 없으면 null */
 	readonly note: string | null;
 }
 
@@ -135,7 +135,7 @@ export function parseXaiUsage(payload: unknown): XaiUsage {
 	const kind: WindowKind = period["type"] === "USAGE_PERIOD_TYPE_WEEKLY" ? "weekly" : "other";
 	const start = isoToEpoch(period["start"]);
 	const resetsAt = isoToEpoch(period["end"]) ?? isoToEpoch(config["billingPeriodEnd"]);
-	const label = kind === "weekly" ? "7d" : start !== null && resetsAt !== null && resetsAt > start ? durationLabel((resetsAt - start) / 1000) : "기간";
+	const label = kind === "weekly" ? "7d" : start !== null && resetsAt !== null && resetsAt > start ? durationLabel((resetsAt - start) / 1000) : "period";
 	const window = windowFrom(label, kind, protoNumber(config, "creditUsagePercent"), resetsAt);
 
 	const parts: string[] = [];
@@ -151,7 +151,7 @@ export function parseXaiUsage(payload: unknown): XaiUsage {
 		}
 	}
 
-	return { windows: window ? [window] : [], note: parts.length > 0 ? `사용 내역 ${parts.join(" · ")}` : null };
+	return { windows: window ? [window] : [], note: parts.length > 0 ? `breakdown ${parts.join(" · ")}` : null };
 }
 
 /** proto3 JSON은 int64를 문자열로 본다("100"). 문자없이 오는 숫자와 문자열 모두 읽되, 해석 불가면 null이다. */

@@ -32,8 +32,8 @@ function timeoutSignal(outer: AbortSignal | undefined): AbortSignal {
 
 /** 에러 메시지에는 토큰이 절대 들어가지 않도록 상태 코드/사유만 남긴다. */
 function httpDetail(status: number): string {
-	if (status === 401 || status === 403) return `인증 실패 (HTTP ${status}) · 재로그인 필요`;
-	if (status === 429) return "요청 제한 (HTTP 429)";
+	if (status === 401 || status === 403) return `auth failed (HTTP ${status}) · re-login required`;
+	if (status === 429) return "rate limited (HTTP 429)";
 	return `HTTP ${status}`;
 }
 
@@ -99,31 +99,31 @@ async function fetchOne(row: AccountRow, secret: Secret, options: CollectOptions
 			const windows = parseClaudeUsage(payload);
 			return windows.length > 0
 				? { ...row, status: "ok", detail: null, windows }
-				: { ...row, status: "error", detail: "응답에 사용량 창이 없음", windows: [] };
+				: { ...row, status: "error", detail: "no usage windows in response", windows: [] };
 		}
 
 		if (kind === "xai") {
 			const usage = parseXaiUsage(payload);
 			return usage.windows.length > 0
 				? { ...row, status: "ok", detail: null, windows: usage.windows, ...(usage.note !== null ? { note: usage.note } : {}) }
-				: { ...row, status: "error", detail: "응답에 사용량 창이 없음", windows: [] };
+				: { ...row, status: "error", detail: "no usage windows in response", windows: [] };
 		}
 
 		if (kind === "kimi") {
 			const windows = parseKimiUsage(payload);
 			return windows.length > 0
 				? { ...row, status: "ok", detail: null, windows }
-				: { ...row, status: "error", detail: "응답에 사용량 창이 없음", windows: [] };
+				: { ...row, status: "error", detail: "no usage windows in response", windows: [] };
 		}
 
 		const usage = parseCodexUsage(payload, now);
 		return usage.windows.length > 0
 			? { ...row, status: "ok", detail: null, plan: usage.plan, windows: usage.windows }
-			: { ...row, status: "error", detail: "응답에 사용량 창이 없음", plan: usage.plan, windows: [] };
+			: { ...row, status: "error", detail: "no usage windows in response", plan: usage.plan, windows: [] };
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		const reason = message.includes("timed out") || message.includes("aborted") ? "시간 초과" : message.slice(0, 60);
-		return { ...row, status: "error", detail: `조회 실패 · ${reason}` };
+		const reason = message.includes("timed out") || message.includes("aborted") ? "timed out" : message.slice(0, 60);
+		return { ...row, status: "error", detail: `fetch failed · ${reason}` };
 	}
 }
 
@@ -154,7 +154,7 @@ export async function collectUsage(auth: unknown, options: CollectOptions = {}):
 		const prev = previous.get(key);
 		if (prev?.retryAt !== undefined && prev.retryAt > now) return prev;
 		const secret = secrets.get(key);
-		if (!secret) return { ...row, status: "error" as const, detail: "액세스 토큰 없음" };
+		if (!secret) return { ...row, status: "error" as const, detail: "no access token" };
 		return fetchOne(row, secret, { ...options, now }, prev);
 	};
 

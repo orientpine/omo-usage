@@ -57,6 +57,6 @@ export function secretsFrom(auth: unknown): Map<string, Secret> {
 
 export async function readAuthFile(path: string = AUTH_PATH): Promise<unknown> {
 	const file = Bun.file(path);
-	if (!(await file.exists())) throw new Error(`자격증명 파일이 없습니다: ${path}`);
+	if (!(await file.exists())) throw new Error(`credentials file not found: ${path}`);
 	return file.json();
 }

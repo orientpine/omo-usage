@@ -76,7 +76,7 @@ export async function runTui(): Promise<void> {
 			state.error = null;
 			scheduleRetry();
 		} catch (error) {
-			if (!closed) state.error = `조회 실패: ${error instanceof Error ? error.message : String(error)}`;
+			if (!closed) state.error = `fetch failed: ${error instanceof Error ? error.message : String(error)}`;
 		} finally {
 			if (inflight === controller) inflight = null;
 			state.refreshing = false;

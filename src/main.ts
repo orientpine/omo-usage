@@ -3,20 +3,20 @@ import { readAuthFile, AUTH_PATH } from "./credentials.ts";
 import { readPoolState } from "./pool.ts";
 import { usageStamp } from "./render.ts";
 
-const HELP = `omo-usage — omo-ai에 로그인된 모든 계정의 잔여 사용량
+const HELP = `omo-usage — remaining usage for every account logged in to omo-ai
 
-사용법:
-  omo-usage            TUI 실행 (r 새로고침 · q 종료)
-  omo-usage --once     한 번만 조회해서 출력하고 종료
-  omo-usage --json     JSON으로 출력하고 종료 (토큰은 절대 포함하지 않음)
-  omo-usage --help     이 도움말
+Usage:
+  omo-usage            run the TUI (r refresh · q quit)
+  omo-usage --once     fetch once, print, and exit
+  omo-usage --json     print JSON and exit (never includes tokens)
+  omo-usage --help     this help
 
-자격증명: ${AUTH_PATH} (읽기 전용)`;
+Credentials: ${AUTH_PATH} (read only)`;
 
 function plain(rows: Awaited<ReturnType<typeof collectUsage>>, now: number): string {
 	return rows
 		.map((row) => {
-			const windows = row.windows.map((w) => `${w.label} ${w.remainingPercent}% 남음`).join(" · ");
+			const windows = row.windows.map((w) => `${w.label} ${w.remainingPercent}% left`).join(" · ");
 			const status = row.status === "ok" ? (row.note ? `${windows} · ${row.note}` : windows) : `${row.status.toUpperCase()}${row.detail ? ` (${row.detail})` : ""}`;
 			const stamp = usageStamp(row, now);
 			return `${row.provider.padEnd(17)} ${row.label.padEnd(12)} ${status}${stamp.text.length > 0 ? ` · ${stamp.text}` : ""}`;

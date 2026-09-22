@@ -124,6 +124,7 @@ describe("parseXaiUsage", () => {
 	test("creditUsagePercent는 7d 창 하나가 되고 productUsage는 내역 문구가 된다", () => {
 		const r = parseXaiUsage(XAI_BODY);
 		expect(r.windows).toEqual([{ label: "7d", kind: "weekly", remainingPercent: 87, resetsAt: Date.parse("2026-09-22T02:26:42.804043+00:00") }]);
+		expect(r.note).toStartWith("breakdown ");
 		expect(r.note).toContain("GrokBuild 12%");
 		expect(r.note).toContain("GrokImagine 1%");
 	});
@@ -144,6 +145,11 @@ describe("parseXaiUsage", () => {
 		expect(parseXaiUsage({ error: "unauthorized" })).toEqual(empty);
 		expect(parseXaiUsage({ config: { currentPeriod: WEEK, creditUsagePercent: "13" } }).windows).toEqual([]);
 		expect(parseXaiUsage({ config: { currentPeriod: WEEK, creditUsagePercent: 13, productUsage: [{ product: "GrokBuild", usagePercent: "12" }] } }).note).toBeNull();
+	});
+
+	test("기간 길이를 알 수 없으면 기본 라벨을 쓴다", () => {
+		const r = parseXaiUsage({ config: { currentPeriod: { type: "USAGE_PERIOD_TYPE_MONTHLY" }, creditUsagePercent: 40 } });
+		expect(r.windows[0]?.label).toBe("period");
 	});
 
 	test("주간이 아닌 기간은 start/end 길이로 라벨을 만든다", () => {

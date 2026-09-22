@@ -31,7 +31,7 @@ function orderOf(provider: string): number {
 }
 
 function unsupportedDetail(entry: Record<string, unknown>): string {
-	return entry["type"] === "api" ? "API key · 사용량 API 없음" : "사용량 API 없음";
+	return entry["type"] === "api" ? "API key · no usage API" : "no usage API";
 }
 
 /**
@@ -40,7 +40,7 @@ function unsupportedDetail(entry: Record<string, unknown>): string {
  * `auth_error`로 찍은 슬롯뿐이고, 그 재로그인은 셸 명령이 아니라 TUI 슬래시 명령 `/login <provider>`다 (`omo auth login`은 없다).
  */
 function expiredDetail(provider: string, slot: string, blockReason: unknown): string {
-	return blockReason === "auth_error" ? `refresh 실패 · omo에서 /login ${provider} (이름: ${slot})` : "senpi가 사용 시 자동 갱신 · 재로그인 불필요";
+	return blockReason === "auth_error" ? `refresh failed · run /login ${provider} in omo (name: ${slot})` : "senpi refreshes it on next use · no re-login";
 }
 
 /**
