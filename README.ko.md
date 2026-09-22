@@ -1,5 +1,7 @@
 # omo-usage
 
+[English](README.md) · **한국어**
+
 omo-ai(senpi)에 로그인된 **모든 계정의 잔여 사용량**과 **지금 차감 중인 계정**을 한 화면에서 보는 터미널 UI.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)

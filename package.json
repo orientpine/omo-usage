@@ -15,7 +15,7 @@
   "bin": {
     "omo-usage": "./bin/omo-usage.ts"
   },
-  "files": ["bin", "src", "README.md"],
+  "files": ["bin", "src", "README.md", "README.ko.md"],
   "engines": {
     "bun": ">=1.2"
   },
