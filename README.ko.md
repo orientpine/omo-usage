@@ -9,44 +9,44 @@ omo-ai(senpi)에 로그인된 **모든 계정의 잔여 사용량**과 **지금 
 [![Install from GitHub](https://img.shields.io/badge/install-github%3Aorientpine%2Fomo--usage-blue?logo=github)](#빠른-시작)
 
 <p align="center">
-  <img src="docs/demo.png" width="670" alt="omo-usage TUI: 계정별 5h/7d/모델별 잔여 막대, ▶ 사용 중 표시, 만료 사유 (데모 데이터)">
+  <img src="docs/demo.png" width="670" alt="omo-usage TUI: 계정별 5h/7d/모델별 잔여 막대, ▶ in use 표시, 만료 사유 (데모 데이터)">
 </p>
 
 <details>
 <summary>텍스트 버전 (위 화면과 같은 데모 데이터)</summary>
 
 ```
-  omo-ai 계정 사용량                               계정 7 · 정상 5 · 갱신 14:00:00
-  ────────────────────────────────────────────────────────────────────────────────
+  omo-ai account usage                    accounts 7 · ok 5 · updated 14:00:00
+  ────────────────────────────────────────────────────────────────────────────
 
   claude-sdk-oauth
-  ▶ alice (고정) 5h    ██████████████████░░  88% 16:00 · 2시간 뒤
-  │              7d    ████████████░░░░░░░░  61% 9/22 14:00 · 3일 뒤
-  │              Fable ███████████████████░  96% 9/22 14:00 · 3일 뒤
-  │              사용 중 · 방금
+  ▶ alice (pinned) 5h    ██████████████████░░  88% 16:00 · in 2h
+  │                7d    ████████████░░░░░░░░  61% 9/22 14:00 · in 3d
+  │                Fable ███████████████████░  96% 9/22 14:00 · in 3d
+  │                in use · just now
 
-  ● bob          5h    ██████░░░░░░░░░░░░░░  32% 18:00 · 4시간 뒤
-  │              7d    ██████░░░░░░░░░░░░░░  31% 9/24 14:00 · 5일 뒤
-  │              Fable ░░░░░░░░░░░░░░░░░░░░   0% 9/24 14:00 · 5일 뒤
-  │              마지막 사용 3시간 전
+  ● bob            5h    ██████░░░░░░░░░░░░░░  32% 18:00 · in 4h
+  │                7d    ██████░░░░░░░░░░░░░░  31% 9/24 14:00 · in 5d
+  │                Fable ░░░░░░░░░░░░░░░░░░░░   0% 9/24 14:00 · in 5d
+  │                last used 3h ago
 
-  ● carol        만료 · senpi가 사용 시 자동 갱신 · 재로그인 불필요
-  │              마지막 사용 14시간 전
+  ● carol          expired · senpi refreshes it on next use · no re-login
+  │                last used 14h ago
 
   openai-codex
-  ● ann (pro)    7d    ██████████████░░░░░░  71% 9/23 14:00 · 4일 뒤
+  ● ann (pro)      7d    ██████████████░░░░░░  71% 9/23 14:00 · in 4d
 
-  ● dana (team)  5h    ████████████████████ 100% 15:00 · 1시간 뒤
-  │              7d    █░░░░░░░░░░░░░░░░░░░   4% 9/25 14:00 · 6일 뒤
+  ● dana (team)    5h    ████████████████████ 100% 15:00 · in 1h
+  │                7d    █░░░░░░░░░░░░░░░░░░░   4% 9/25 14:00 · in 6d
 
   xai
-  ● default      7d    █████████████████░░░  87% 9/22 08:00 · 2일 18시간 뒤
-  │              사용 내역 GrokBuild 12% · GrokImagine 1%
+  ● default        7d    █████████████████░░░  87% 9/22 08:00 · in 2d 18h
+  │                breakdown GrokBuild 12% · GrokImagine 1%
 
   google
-  ● google       n/a · API key · 사용량 API 없음
+  ● google         n/a · API key · no usage API
 
-  [r] 새로고침   [q] 종료
+  [r] refresh   [q] quit
 ```
 
 </details>
@@ -88,20 +88,20 @@ senpi가 쓰는 두 파일을 열어 볼 뿐 한 바이트도 쓰지 않는다. 
 
 ### 화면 읽는 법
 
-- **한 계정 = 한 블록.** 첫 줄 `●` 뒤에 계정 이름(Codex는 `(pro)`/`(team)` 플랜, auth.json이 고정한 슬롯은 `(고정)`), 이어지는 창은 `│`로 묶인다.
-- **지금 차감 중인 계정은 `▶`다.** senpi가 최근 10분 안에 그 계정으로 요청을 성공시켰으면 마커가 초록 `▶`가 되고 블록 끝에 `사용 중 · 방금`이 붙는다. 더 오래됐으면 `●` 그대로에 dim `마지막 사용 3시간 전`. senpi는 세션마다 계정을 따로 고르므로 `▶`가 둘 이상일 수 있다. Codex·xAI·kimi-coding은 senpi가 이 기록을 남기지 않으므로 TUI가 직전 조회와 잔여를 비교해 줄어든 만큼을 `사용 중 · 방금 조회에서 -3%`로 적는다 — 근거가 다르니 문구도 다르다(정확한 시각이 아니라 150초 조회 주기 안 어딘가이고, Codex는 정수 %라 1%p 미만은 안 잡힌다). 오래되면 `마지막 차감 감지 25분 전`. `--once`/`--json`은 직전 조회가 없어 이 표시가 없다. google은 사용량 API 자체가 없다.
+- **한 계정 = 한 블록.** 첫 줄 `●` 뒤에 계정 이름(Codex는 `(pro)`/`(team)` 플랜, auth.json이 고정한 슬롯은 `(pinned)`), 이어지는 창은 `│`로 묶인다.
+- **지금 차감 중인 계정은 `▶`다.** senpi가 최근 10분 안에 그 계정으로 요청을 성공시켰으면 마커가 초록 `▶`가 되고 블록 끝에 `in use · just now`이 붙는다. 더 오래됐으면 `●` 그대로에 dim `last used 3h ago`. senpi는 세션마다 계정을 따로 고르므로 `▶`가 둘 이상일 수 있다. Codex·xAI·kimi-coding은 senpi가 이 기록을 남기지 않으므로 TUI가 직전 조회와 잔여를 비교해 줄어든 만큼을 `in use · -3% since poll 2m ago`로 적는다 — 근거가 다르니 문구도 다르다(정확한 시각이 아니라 150초 조회 주기 안 어딘가이고, Codex는 정수 %라 1%p 미만은 안 잡힌다). 오래되면 `last drain seen 25m ago`. `--once`/`--json`은 직전 조회가 없어 이 표시가 없다. google은 사용량 API 자체가 없다.
 - **막대와 %는 남은 양이다.** 100%가 아직 하나도 안 쓴 상태. 초록 ≥ 50% · 노랑 ≥ 20% · 빨강 < 20%.
 - **창 이름**: `5h` 세션, `7d` 주간, `Fable`처럼 모델 이름이 붙으면 그 모델의 주간 한도.
-- **리셋 시각**은 오늘이면 `16:00`, 아니면 `9/22 14:00`, 그 뒤에 `2시간 뒤` 같은 상대 시간.
-- **xAI**는 주간 크레딧 풀 하나가 막대가 되고, 그 아래 `사용 내역 GrokBuild 12% · GrokImagine 1%`는 같은 풀에서 제품별로 쓴 몫이다(잔여가 아니라 사용).
+- **리셋 시각**은 오늘이면 `16:00`, 아니면 `9/22 14:00`, 그 뒤에 `in 2h` 같은 상대 시간.
+- **xAI**는 주간 크레딧 풀 하나가 막대가 되고, 그 아래 `breakdown GrokBuild 12% · GrokImagine 1%`는 같은 풀에서 제품별로 쓴 몫이다(잔여가 아니라 사용).
 - 막대 대신 사유가 뜨는 경우:
 
 | 표시 | 뜻 |
 | --- | --- |
-| `만료 · senpi가 사용 시 자동 갱신 · 재로그인 불필요` | 액세스 토큰만 만료. senpi가 그 계정을 쓰는 순간 refresh token으로 갱신한다 |
-| `만료 · refresh 실패 · omo에서 /login <provider> (이름: <슬롯>)` | refresh token까지 죽은 경우. omo TUI에서 `/login`으로 재인증 |
-| `요청 제한 (HTTP 429) · HH:MM 재시도` | 직전 막대를 그대로 두고, 그 시각 전에는 다시 부르지 않는다 |
-| `오류 · …` | HTTP 오류·시간 초과·해석 불가 응답. 숫자를 지어내지 않는다 |
+| `expired · senpi refreshes it on next use · no re-login` | 액세스 토큰만 만료. senpi가 그 계정을 쓰는 순간 refresh token으로 갱신한다 |
+| `expired · refresh failed · run /login <provider> in omo (name: <slot>)` | refresh token까지 죽은 경우. omo TUI에서 `/login`으로 재인증 |
+| `rate limited (HTTP 429) · retry HH:MM` | 직전 막대를 그대로 두고, 그 시각 전에는 다시 부르지 않는다 |
+| `error · …` | HTTP 오류·시간 초과·해석 불가 응답. 숫자를 지어내지 않는다 |
 | `n/a · …` | 사용량 API가 없는 provider(google) |
 
 ### JSON 출력
@@ -145,15 +145,15 @@ omo-usage --json | jq -r --argjson now "$(date +%s000)" '.[] | select(.lastUsedA
 ## FAQ
 
 **지금 senpi가 어느 계정을 차감하고 있는지 알 수 있나?**
-`▶`가 붙은 계정이다. senpi는 요청이 성공할 때마다 `~/.omo/agent/credential-pool-state.json`에 그 슬롯의 `lastSuccessAt`을 적고, omo-usage는 그 값이 10분 이내인 슬롯을 `사용 중`으로 표시한다. TUI는 이 파일만 5초마다 다시 읽으므로 사용량 조회 주기(150초)와 무관하게 바로 따라온다. "지금 이 계정 하나"라고 단정하지 않는 이유가 있다: senpi는 세션마다 해시로 계정을 고르고(고정 계정이 있으면 그것을 우선), 세션이 여럿이면 여러 계정이 동시에 차감된다. 그래서 `▶`는 둘 이상일 수 있고, 옆의 `방금`·`3분 전`이 판단 근거다. Codex·xAI·kimi-coding은 senpi가 이 기록을 남기지 않는다(`openai-codex`·`kimi-coding`의 `stored/slots`가 비어 있고 xai는 항목 자체가 없다). 그래서 TUI는 이 셋을 직전 조회와 잔여를 비교하는 방식으로 대신한다 — 잔여가 줄었으면 `▶ … 사용 중 · 방금 조회에서 -3%`. 정확한 시각이 아니라 150초 조회 주기 안 어딘가이며, 리셋으로 잔여가 느는 건 차감으로 치지 않는다. google은 사용량 API가 없다.
+`▶`가 붙은 계정이다. senpi는 요청이 성공할 때마다 `~/.omo/agent/credential-pool-state.json`에 그 슬롯의 `lastSuccessAt`을 적고, omo-usage는 그 값이 10분 이내인 슬롯을 `in use`으로 표시한다. TUI는 이 파일만 5초마다 다시 읽으므로 사용량 조회 주기(150초)와 무관하게 바로 따라온다. "지금 이 계정 하나"라고 단정하지 않는 이유가 있다: senpi는 세션마다 해시로 계정을 고르고(고정 계정이 있으면 그것을 우선), 세션이 여럿이면 여러 계정이 동시에 차감된다. 그래서 `▶`는 둘 이상일 수 있고, 옆의 `just now`·`3m ago`가 판단 근거다. Codex·xAI·kimi-coding은 senpi가 이 기록을 남기지 않는다(`openai-codex`·`kimi-coding`의 `stored/slots`가 비어 있고 xai는 항목 자체가 없다). 그래서 TUI는 이 셋을 직전 조회와 잔여를 비교하는 방식으로 대신한다 — 잔여가 줄었으면 `▶ … in use · -3% since poll 2m ago`. 정확한 시각이 아니라 150초 조회 주기 안 어딘가이며, 리셋으로 잔여가 느는 건 차감으로 치지 않는다. google은 사용량 API가 없다.
 
 **"만료"라는데 다시 로그인해야 하나?**
-대개 아니다. 액세스 토큰 만료는 정상이고, refresh token이 살아 있으면 senpi가 그 계정을 다음에 쓰는 순간 자동 갱신한다. omo-usage는 auth.json을 읽기만 하므로 갱신을 대신 해 주지 못하고(직접 refresh하면 refresh token이 회전돼 senpi 저장본이 깨진다) 만료 상태를 그대로 보여줄 뿐이다. 재로그인이 필요한 건 `refresh 실패`가 붙은 경우뿐이며, 그때는 omo TUI에서 `/login claude-sdk-oauth`를 실행하고 이름 프롬프트에 기존 슬롯 이름을 입력하면 제자리에서 교체된다.
+대개 아니다. 액세스 토큰 만료는 정상이고, refresh token이 살아 있으면 senpi가 그 계정을 다음에 쓰는 순간 자동 갱신한다. omo-usage는 auth.json을 읽기만 하므로 갱신을 대신 해 주지 못하고(직접 refresh하면 refresh token이 회전돼 senpi 저장본이 깨진다) 만료 상태를 그대로 보여줄 뿐이다. 재로그인이 필요한 건 `refresh failed`가 붙은 경우뿐이며, 그때는 omo TUI에서 `/login claude-sdk-oauth`를 실행하고 이름 프롬프트에 기존 슬롯 이름을 입력하면 제자리에서 교체된다.
 
 **`omo auth login` 같은 셸 명령은 없나?**
 없다. `omo auth`에는 `check` / `print-api-key` / `print-bearer-token`뿐이다. 로그인은 TUI 안의 `/login <provider>` 또는 `/claude-account add`다.
 
-**계정마다 `요청 제한 (HTTP 429)`가 자주 뜬다.**
+**계정마다 `rate limited (HTTP 429)`가 자주 뜬다.**
 Anthropic usage 엔드포인트는 토큰당 마지막 성공 뒤 약 95초 동안 429를 돌려준다. senpi 자체 폴링과 겹치면 더 잦다. omo-usage는 429를 받으면 직전 막대를 유지하고 재시도 시각 전에는 그 계정을 다시 부르지 않으며, 자동 갱신 주기(150초)도 이 쿨다운보다 길게 잡았다. 값이 사라지는 게 아니라 잠시 안 바뀌는 것뿐이다.
 
 **xAI 제품별 내역은 왜 막대가 아닌가?**
@@ -177,7 +177,7 @@ auth.json은 읽기 전용으로 열고, 토큰은 fetch 호출에만 쓴다. �
 - **숫자를 지어내지 않는다.** 응답이 비었거나 형식이 다르면 막대 대신 사유를 보여준다.
 - **auth.json에 쓰지 않는다.** 토큰 갱신은 senpi 몫이다.
 - **만료 ≠ 죽음.** 재로그인 안내는 senpi failover가 `blockReason: "auth_error"`로 찍은 슬롯에만 붙인다.
-- **"현재 계정" 하나를 단정하지 않는다.** senpi의 계정 선택은 세션별이라, 슬롯마다 마지막 차감 시각을 그대로 보여주고 최근(10분)이면 `▶`로 부른다. 근거가 다르면 문구도 다르다(`방금` vs `방금 조회에서 -3%`).
+- **"현재 계정" 하나를 단정하지 않는다.** senpi의 계정 선택은 세션별이라, 슬롯마다 마지막 차감 시각을 그대로 보여주고 최근(10분)이면 `▶`로 부른다. 근거가 다르면 문구도 다르다(`just now` vs `-3% since poll`).
 - **429에 막대를 지우지 않는다.** 직전 값 유지 + 재시도 시각 표시 + 그 전엔 호출 안 함.
 - **한 줄도 터미널 폭을 넘지 않는다.** 한글·전각 폭을 직접 계산해 색을 입혀도 열이 흔들리지 않는다.
 
@@ -186,10 +186,10 @@ auth.json은 읽기 전용으로 열고, 토큰은 fetch 호출에만 쓴다. �
 
 - **Codex 창은 위치가 아니라 길이로 구분한다.** 플랜에 따라 `primary_window`가 주간이기도 5시간이기도 해서 `limit_window_seconds`(18000 / 604800)로 판별한다.
 - **Claude 모델별 주간 한도는 `limits[]`의 `weekly_scoped`에만 있다.** `seven_day_opus` 같은 최상위 키는 대개 `null`.
-- **xAI 응답은 proto3 JSON이라 0은 키가 빠진다.** `config.currentPeriod`가 있는데 `creditUsagePercent`만 없으면 0(잔여 100%)으로 읽고, `currentPeriod` 자체가 없으면 크레딧 응답이 아니므로 `오류`로 둔다. `{"val":0}`은 `{}`로 온다.
+- **xAI 응답은 proto3 JSON이라 0은 키가 빠진다.** `config.currentPeriod`가 있는데 `creditUsagePercent`만 없으면 0(잔여 100%)으로 읽고, `currentPeriod` 자체가 없으면 크레딧 응답이 아니므로 `error`로 둔다. `{"val":0}`은 `{}`로 온다.
 - **Anthropic 429 창은 토큰당 약 95초**(2026-09-18 실측). `Retry-After`가 있으면 그 값을, 없으면 120초를 쿨다운으로 쓴다.
 - **xAI 슬롯의 라벨은 `default`다.** senpi가 xai에는 displayName을 저장하지 않는다.
-- **차감 기록은 `credential-pool-state.json`에만 있다.** `providers.<provider>.lanes.stored.slots.<슬롯>.lastSuccessAt`이 요청 성공마다 갱신된다. `lease`는 half-open 프로브 잠금(30초)이라 사용 중 신호가 아니다. 옛 슬롯 이름·계정 id 키가 잔재로 남아 있어 현재 auth.json 슬롯 이름으로만 대조하고, Codex·kimi-coding 슬롯은 이 파일에 아예 없다(xai는 provider 항목 자체가 없다). 그래서 이 셋은 TUI 갱신 사이의 잔여 감소로 대신한다 — `collect.ts`가 직전 결과의 `remainingPercent`를 창 라벨별로 비교해 줄어든 최대 폭을 `drained`로 남기고, 잔여 증가(리셋)는 감지하지 않으며 새 감지가 없으면 직전 감지를 유지한다.
+- **차감 기록은 `credential-pool-state.json`에만 있다.** `providers.<provider>.lanes.stored.slots.<slot>.lastSuccessAt`이 요청 성공마다 갱신된다. `lease`는 half-open 프로브 잠금(30초)이라 사용 중 신호가 아니다. 옛 슬롯 이름·계정 id 키가 잔재로 남아 있어 현재 auth.json 슬롯 이름으로만 대조하고, Codex·kimi-coding 슬롯은 이 파일에 아예 없다(xai는 provider 항목 자체가 없다). 그래서 이 셋은 TUI 갱신 사이의 잔여 감소로 대신한다 — `collect.ts`가 직전 결과의 `remainingPercent`를 창 라벨별로 비교해 줄어든 최대 폭을 `drained`로 남기고, 잔여 증가(리셋)는 감지하지 않으며 새 감지가 없으면 직전 감지를 유지한다.
 
 </details>
 

@@ -16,43 +16,40 @@ A terminal UI that shows the **remaining quota of every account** signed in to o
 <summary>Text version (the same demo data as the screenshot above)</summary>
 
 ```
-  omo-ai 계정 사용량                               계정 7 · 정상 5 · 갱신 14:00:00
-  ────────────────────────────────────────────────────────────────────────────────
+  omo-ai account usage                    accounts 7 · ok 5 · updated 14:00:00
+  ────────────────────────────────────────────────────────────────────────────
 
   claude-sdk-oauth
-  ▶ alice (고정) 5h    ██████████████████░░  88% 16:00 · 2시간 뒤
-  │              7d    ████████████░░░░░░░░  61% 9/22 14:00 · 3일 뒤
-  │              Fable ███████████████████░  96% 9/22 14:00 · 3일 뒤
-  │              사용 중 · 방금
+  ▶ alice (pinned) 5h    ██████████████████░░  88% 16:00 · in 2h
+  │                7d    ████████████░░░░░░░░  61% 9/22 14:00 · in 3d
+  │                Fable ███████████████████░  96% 9/22 14:00 · in 3d
+  │                in use · just now
 
-  ● bob          5h    ██████░░░░░░░░░░░░░░  32% 18:00 · 4시간 뒤
-  │              7d    ██████░░░░░░░░░░░░░░  31% 9/24 14:00 · 5일 뒤
-  │              Fable ░░░░░░░░░░░░░░░░░░░░   0% 9/24 14:00 · 5일 뒤
-  │              마지막 사용 3시간 전
+  ● bob            5h    ██████░░░░░░░░░░░░░░  32% 18:00 · in 4h
+  │                7d    ██████░░░░░░░░░░░░░░  31% 9/24 14:00 · in 5d
+  │                Fable ░░░░░░░░░░░░░░░░░░░░   0% 9/24 14:00 · in 5d
+  │                last used 3h ago
 
-  ● carol        만료 · senpi가 사용 시 자동 갱신 · 재로그인 불필요
-  │              마지막 사용 14시간 전
+  ● carol          expired · senpi refreshes it on next use · no re-login
+  │                last used 14h ago
 
   openai-codex
-  ● ann (pro)    7d    ██████████████░░░░░░  71% 9/23 14:00 · 4일 뒤
+  ● ann (pro)      7d    ██████████████░░░░░░  71% 9/23 14:00 · in 4d
 
-  ● dana (team)  5h    ████████████████████ 100% 15:00 · 1시간 뒤
-  │              7d    █░░░░░░░░░░░░░░░░░░░   4% 9/25 14:00 · 6일 뒤
+  ● dana (team)    5h    ████████████████████ 100% 15:00 · in 1h
+  │                7d    █░░░░░░░░░░░░░░░░░░░   4% 9/25 14:00 · in 6d
 
   xai
-  ● default      7d    █████████████████░░░  87% 9/22 08:00 · 2일 18시간 뒤
-  │              사용 내역 GrokBuild 12% · GrokImagine 1%
+  ● default        7d    █████████████████░░░  87% 9/22 08:00 · in 2d 18h
+  │                breakdown GrokBuild 12% · GrokImagine 1%
 
   google
-  ● google       n/a · API key · 사용량 API 없음
+  ● google         n/a · API key · no usage API
 
-  [r] 새로고침   [q] 종료
+  [r] refresh   [q] quit
 ```
 
 </details>
-
-> [!NOTE]
-> The TUI speaks Korean, so the frame above is verbatim program output rather than a translation. Glossary: `계정 사용량` account usage · `계정 7 · 정상 5` 7 accounts, 5 ok · `갱신 14:00:00` last refresh · `사용 중 · 방금` in use, just now · `마지막 사용 3시간 전` last used 3 hours ago · `만료` expired · `senpi가 사용 시 자동 갱신 · 재로그인 불필요` senpi refreshes it on next use, no re-login needed · `사용 내역` usage breakdown · `사용량 API 없음` no usage API · `[r] 새로고침` refresh · `[q] 종료` quit.
 
 Once you run several Claude, Codex, xAI and Kimi accounts through senpi, you keep asking "how much is left on which account?" and "which one am I spending right now?" — and checking by hand every time gets old. omo-usage **only reads** the credentials and account-pool state senpi already stores, and shows the remaining percentage and reset time per account together with the account being drained right now. Tokens never appear on screen, in the output or in a log, and when a response cannot be interpreted it writes down the reason instead of inventing a number.
 
@@ -91,20 +88,20 @@ It opens the two files senpi uses and writes not a single byte. Token refresh an
 
 ### How to read the screen
 
-- **One account = one block.** The first line carries the account name after `●` (Codex adds the plan, `(pro)`/`(team)`; a slot pinned by auth.json gets `(고정)`, pinned), and the windows below it are tied together by `│`.
-- **The account being drained right now is `▶`.** If senpi completed a request on that account within the last 10 minutes, the marker turns into a green `▶` and the block ends with `사용 중 · 방금` (in use, just now). Anything older stays `●` with a dim `마지막 사용 3시간 전` (last used 3 hours ago). senpi picks an account per session, so there can be more than one `▶`. senpi keeps no such record for Codex, xAI and kimi-coding, so the TUI compares the previous fetch against the current one and writes the drop as `사용 중 · 방금 조회에서 -3%` (in use, −3% since the last fetch) — different evidence, so different wording (it is not an exact timestamp but somewhere inside the 150-second fetch interval, and since Codex reports whole percents anything below 1 pp goes unnoticed). Once it goes stale: `마지막 차감 감지 25분 전` (last drain detected 25 minutes ago). `--once`/`--json` have no previous fetch, so they show none of this. google has no usage API at all.
+- **One account = one block.** The first line carries the account name after `●` (Codex adds the plan, `(pro)`/`(team)`; a slot pinned by auth.json gets `(pinned)`), and the windows below it are tied together by `│`.
+- **The account being drained right now is `▶`.** If senpi completed a request on that account within the last 10 minutes, the marker turns into a green `▶` and the block ends with `in use · just now`. Anything older stays `●` with a dim `last used 3h ago`. senpi picks an account per session, so there can be more than one `▶`. senpi keeps no such record for Codex, xAI and kimi-coding, so the TUI compares the previous fetch against the current one and writes the drop as `in use · -3% since poll 2m ago` — different evidence, so different wording (it is not an exact timestamp but somewhere inside the 150-second fetch interval, and since Codex reports whole percents anything below 1 pp goes unnoticed). Once it goes stale: `last drain seen 25m ago`. `--once`/`--json` have no previous fetch, so they show none of this. google has no usage API at all.
 - **The bar and the percentage are what is left.** 100% means nothing used yet. Green ≥ 50% · yellow ≥ 20% · red < 20%.
 - **Window names**: `5h` session, `7d` weekly, and a model name such as `Fable` means that model's weekly limit.
-- **Reset times** read `16:00` when they fall today, otherwise `9/22 14:00`, followed by a relative time like `2시간 뒤` (in 2 hours).
-- **xAI** turns its single weekly credit pool into the bar, and the `사용 내역 GrokBuild 12% · GrokImagine 1%` line below it is each product's share of that same pool (usage, not remaining).
+- **Reset times** read `16:00` when they fall today, otherwise `9/22 14:00`, followed by a relative time like `in 2h`.
+- **xAI** turns its single weekly credit pool into the bar, and the `breakdown GrokBuild 12% · GrokImagine 1%` line below it is each product's share of that same pool (usage, not remaining).
 - When a reason shows up instead of a bar:
 
 | Display | Meaning |
 | --- | --- |
-| `만료 · senpi가 사용 시 자동 갱신 · 재로그인 불필요` | Only the access token expired. senpi refreshes it with the refresh token the moment it uses that account |
-| `만료 · refresh 실패 · omo에서 /login <provider> (이름: <슬롯>)` | The refresh token is dead too. Re-authenticate with `/login` in the omo TUI |
-| `요청 제한 (HTTP 429) · HH:MM 재시도` | The previous bar is kept as is, and the account is not called again before that time |
-| `오류 · …` | HTTP error, timeout, or a response that cannot be parsed. No numbers are invented |
+| `expired · senpi refreshes it on next use · no re-login` | Only the access token expired. senpi refreshes it with the refresh token the moment it uses that account |
+| `expired · refresh failed · run /login <provider> in omo (name: <slot>)` | The refresh token is dead too. Re-authenticate with `/login` in the omo TUI |
+| `rate limited (HTTP 429) · retry HH:MM` | The previous bar is kept as is, and the account is not called again before that time |
+| `error · …` | HTTP error, timeout, or a response that cannot be parsed. No numbers are invented |
 | `n/a · …` | A provider with no usage API (google) |
 
 ### JSON output
@@ -148,15 +145,15 @@ omo-usage --json | jq -r --argjson now "$(date +%s000)" '.[] | select(.lastUsedA
 ## FAQ
 
 **Can I tell which account senpi is spending right now?**
-The one marked `▶`. Every time a request succeeds, senpi writes that slot's `lastSuccessAt` into `~/.omo/agent/credential-pool-state.json`, and omo-usage marks every slot newer than 10 minutes as in use. The TUI re-reads only that file every 5 seconds, so it keeps up regardless of the 150-second usage fetch interval. There is a reason it refuses to declare "this one account": senpi picks an account per session by hash (preferring a pinned account when one exists), so with several sessions several accounts are drained at once. Hence more than one `▶` is possible, and the `방금` (just now) / `3분 전` (3 minutes ago) next to it is what you judge by. senpi keeps no such record for Codex, xAI and kimi-coding (`stored/slots` is empty for `openai-codex` and `kimi-coding`, and xai has no entry at all). For those three the TUI substitutes a comparison of remaining values between fetches — if the remainder dropped, `▶ … 사용 중 · 방금 조회에서 -3%`. That is not an exact timestamp but somewhere inside the 150-second fetch interval, and a rise caused by a reset does not count as drain. google has no usage API.
+The one marked `▶`. Every time a request succeeds, senpi writes that slot's `lastSuccessAt` into `~/.omo/agent/credential-pool-state.json`, and omo-usage marks every slot newer than 10 minutes as in use. The TUI re-reads only that file every 5 seconds, so it keeps up regardless of the 150-second usage fetch interval. There is a reason it refuses to declare "this one account": senpi picks an account per session by hash (preferring a pinned account when one exists), so with several sessions several accounts are drained at once. Hence more than one `▶` is possible, and the `just now` / `3m ago` next to it is what you judge by. senpi keeps no such record for Codex, xAI and kimi-coding (`stored/slots` is empty for `openai-codex` and `kimi-coding`, and xai has no entry at all). For those three the TUI substitutes a comparison of remaining values between fetches — if the remainder dropped, `▶ … in use · -3% since poll 2m ago`. That is not an exact timestamp but somewhere inside the 150-second fetch interval, and a rise caused by a reset does not count as drain. google has no usage API.
 
 **It says expired — do I have to log in again?**
-Usually not. An expired access token is normal, and as long as the refresh token is alive senpi refreshes it the moment it next uses that account. omo-usage only reads auth.json, so it cannot refresh on your behalf (refreshing directly would rotate the refresh token and corrupt senpi's stored copy) — it simply shows the expiry as it is. Re-login is needed only when `refresh 실패` (refresh failed) is attached, and then you run `/login claude-sdk-oauth` in the omo TUI and enter the existing slot name at the name prompt, which replaces it in place.
+Usually not. An expired access token is normal, and as long as the refresh token is alive senpi refreshes it the moment it next uses that account. omo-usage only reads auth.json, so it cannot refresh on your behalf (refreshing directly would rotate the refresh token and corrupt senpi's stored copy) — it simply shows the expiry as it is. Re-login is needed only when `refresh failed` is attached, and then you run `/login claude-sdk-oauth` in the omo TUI and enter the existing slot name at the name prompt, which replaces it in place.
 
 **Is there no shell command like `omo auth login`?**
 There is not. `omo auth` only has `check` / `print-api-key` / `print-bearer-token`. Logging in is `/login <provider>` or `/claude-account add` inside the TUI.
 
-**`요청 제한 (HTTP 429)` keeps showing up on my accounts.**
+**`rate limited (HTTP 429)` keeps showing up on my accounts.**
 The Anthropic usage endpoint returns 429 for roughly 95 seconds after the last success per token, and it gets more frequent when it collides with senpi's own polling. On a 429 omo-usage keeps the previous bar and does not call that account again before the retry time, and the auto-refresh interval (150 s) is deliberately longer than that cooldown. The value is not gone — it just does not move for a while.
 
 **Why is the xAI per-product breakdown not a bar?**
@@ -180,7 +177,7 @@ auth.json is opened read-only and tokens are used in the fetch call and nowhere 
 - **Never invent a number.** If the response is empty or shaped differently, show the reason instead of a bar.
 - **Never write to auth.json.** Refreshing tokens is senpi's job.
 - **Expired ≠ dead.** The re-login hint is attached only to slots that senpi's failover stamped with `blockReason: "auth_error"`.
-- **Never declare a single "current account".** senpi chooses per session, so every slot shows its own last-drain time and earns a `▶` when that is recent (10 minutes). Different evidence, different wording (`방금` vs `방금 조회에서 -3%`).
+- **Never declare a single "current account".** senpi chooses per session, so every slot shows its own last-drain time and earns a `▶` when that is recent (10 minutes). Different evidence, different wording (`just now` vs `-3% since poll`).
 - **A 429 never erases a bar.** Keep the previous value, show the retry time, and do not call before it.
 - **No line ever exceeds the terminal width.** Hangul and full-width glyph widths are measured by hand, so columns hold even with color applied.
 
@@ -189,7 +186,7 @@ auth.json is opened read-only and tokens are used in the fetch call and nowhere 
 
 - **Codex windows are told apart by length, not by position.** Depending on the plan, `primary_window` can be the weekly one or the 5-hour one, so `limit_window_seconds` (18000 / 604800) decides.
 - **Claude's per-model weekly limits live only in `weekly_scoped` inside `limits[]`.** Top-level keys such as `seven_day_opus` are usually `null`.
-- **The xAI response is proto3 JSON, so a zero drops its key.** When `config.currentPeriod` is present but `creditUsagePercent` is missing, read it as 0 (100% remaining); when `currentPeriod` itself is missing it is not a credits response at all, so it stays an error. `{"val":0}` arrives as `{}`.
+- **The xAI response is proto3 JSON, so a zero drops its key.** When `config.currentPeriod` is present but `creditUsagePercent` is missing, read it as 0 (100% remaining); when `currentPeriod` itself is missing it is not a credits response at all, so it stays an `error`. `{"val":0}` arrives as `{}`.
 - **The Anthropic 429 window is about 95 seconds per token** (measured 2026-09-18). Use `Retry-After` when it is present, otherwise 120 seconds as the cooldown.
 - **The xAI slot's label is `default`.** senpi stores no displayName for xai.
 - **The drain record exists only in `credential-pool-state.json`.** `providers.<provider>.lanes.stored.slots.<slot>.lastSuccessAt` is updated on every successful request. `lease` is a half-open probe lock (30 s), not an in-use signal. Stale slot names and account-id keys linger in the file, so matching happens only against the current auth.json slot names, and Codex and kimi-coding slots are missing from it entirely (xai has no provider entry at all). That is why those three fall back to the drop in remaining values between TUI refreshes — `collect.ts` compares the previous result's `remainingPercent` per window label, keeps the largest drop as `drained`, never treats a rise (a reset) as a drain, and holds on to the previous detection when there is no new one.
