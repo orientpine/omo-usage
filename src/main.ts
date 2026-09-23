@@ -14,12 +14,14 @@ Usage:
 Credentials: ${AUTH_PATH} (read only)`;
 
 function plain(rows: Awaited<ReturnType<typeof collectUsage>>, now: number): string {
+	// provider id 길이가 senpi 버전마다 달라서(anthropic-subscription 22자) 고정 폭 대신 가장 긴 id에 맞춘다.
+	const providerWidth = Math.max(0, ...rows.map((row) => row.provider.length));
 	return rows
 		.map((row) => {
 			const windows = row.windows.map((w) => `${w.label} ${w.remainingPercent}% left`).join(" · ");
 			const status = row.status === "ok" ? (row.note ? `${windows} · ${row.note}` : windows) : `${row.status.toUpperCase()}${row.detail ? ` (${row.detail})` : ""}`;
 			const stamp = usageStamp(row, now);
-			return `${row.provider.padEnd(17)} ${row.label.padEnd(12)} ${status}${stamp.text.length > 0 ? ` · ${stamp.text}` : ""}`;
+			return `${row.provider.padEnd(providerWidth)} ${row.label.padEnd(12)} ${status}${stamp.text.length > 0 ? ` · ${stamp.text}` : ""}`;
 		})
 		.join("\n");
 }
