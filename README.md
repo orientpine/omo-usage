@@ -19,7 +19,7 @@ A terminal UI that shows the **remaining quota of every account** signed in to o
   omo-ai account usage                    accounts 7 · ok 5 · updated 14:00:00
   ────────────────────────────────────────────────────────────────────────────
 
-  claude-sdk-oauth
+  anthropic-subscription
   ▶ alice (pinned) 5h    ██████████████████░░  88% 16:00 · in 2h
   │                7d    ████████████░░░░░░░░  61% 9/22 14:00 · in 3d
   │                Fable ███████████████████░  96% 9/22 14:00 · in 3d
@@ -33,7 +33,7 @@ A terminal UI that shows the **remaining quota of every account** signed in to o
   ● carol          expired · senpi refreshes it on next use · no re-login
   │                last used 14h ago
 
-  openai-codex
+  chatgpt-subscription
   ● ann (pro)      7d    ██████████████░░░░░░  71% 9/23 14:00 · in 4d
 
   ● dana (team)    5h    ████████████████████ 100% 15:00 · in 1h
@@ -111,7 +111,7 @@ It opens the two files senpi uses and writes not a single byte. Token refresh an
 ```json
 [
   {
-    "provider": "claude-sdk-oauth",
+    "provider": "anthropic-subscription",
     "slot": "default",
     "label": "alice",
     "status": "ok",
@@ -145,10 +145,10 @@ omo-usage --json | jq -r --argjson now "$(date +%s000)" '.[] | select(.lastUsedA
 ## FAQ
 
 **Can I tell which account senpi is spending right now?**
-The one marked `▶`. Every time a request succeeds, senpi writes that slot's `lastSuccessAt` into `~/.omo/agent/credential-pool-state.json`, and omo-usage marks every slot newer than 10 minutes as in use. The TUI re-reads only that file every 5 seconds, so it keeps up regardless of the 150-second usage fetch interval. There is a reason it refuses to declare "this one account": senpi picks an account per session by hash (preferring a pinned account when one exists), so with several sessions several accounts are drained at once. Hence more than one `▶` is possible, and the `just now` / `3m ago` next to it is what you judge by. senpi keeps no such record for Codex, xAI and kimi-coding (`stored/slots` is empty for `openai-codex` and `kimi-coding`, and xai has no entry at all). For those three the TUI substitutes a comparison of remaining values between fetches — if the remainder dropped, `▶ … in use · -3% since poll 2m ago`. That is not an exact timestamp but somewhere inside the 150-second fetch interval, and a rise caused by a reset does not count as drain. google has no usage API.
+The one marked `▶`. Every time a request succeeds, senpi writes that slot's `lastSuccessAt` into `~/.omo/agent/credential-pool-state.json`, and omo-usage marks every slot newer than 10 minutes as in use. The TUI re-reads only that file every 5 seconds, so it keeps up regardless of the 150-second usage fetch interval. There is a reason it refuses to declare "this one account": senpi picks an account per session by hash (preferring a pinned account when one exists), so with several sessions several accounts are drained at once. Hence more than one `▶` is possible, and the `just now` / `3m ago` next to it is what you judge by. senpi keeps no such record for Codex, xAI and kimi-coding (`stored/slots` is empty for `chatgpt-subscription` and `kimi-coding`, and xai has no entry at all). For those three the TUI substitutes a comparison of remaining values between fetches — if the remainder dropped, `▶ … in use · -3% since poll 2m ago`. That is not an exact timestamp but somewhere inside the 150-second fetch interval, and a rise caused by a reset does not count as drain. google has no usage API.
 
 **It says expired — do I have to log in again?**
-Usually not. An expired access token is normal, and as long as the refresh token is alive senpi refreshes it the moment it next uses that account. omo-usage only reads auth.json, so it cannot refresh on your behalf (refreshing directly would rotate the refresh token and corrupt senpi's stored copy) — it simply shows the expiry as it is. Re-login is needed only when `refresh failed` is attached, and then you run `/login claude-sdk-oauth` in the omo TUI and enter the existing slot name at the name prompt, which replaces it in place.
+Usually not. An expired access token is normal, and as long as the refresh token is alive senpi refreshes it the moment it next uses that account. omo-usage only reads auth.json, so it cannot refresh on your behalf (refreshing directly would rotate the refresh token and corrupt senpi's stored copy) — it simply shows the expiry as it is. Re-login is needed only when `refresh failed` is attached, and then you run `/login anthropic-subscription` in the omo TUI and enter the existing slot name at the name prompt, which replaces it in place.
 
 **Is there no shell command like `omo auth login`?**
 There is not. `omo auth` only has `check` / `print-api-key` / `print-bearer-token`. Logging in is `/login <provider>` or `/claude-account add` inside the TUI.
@@ -166,8 +166,8 @@ auth.json is opened read-only and tokens are used in the fetch call and nowhere 
 
 | provider | What you see | Where it comes from |
 | --- | --- | --- |
-| `claude-sdk-oauth` | Per-account 5h / 7d / per-model weekly limits | `GET https://api.anthropic.com/api/oauth/usage` (`anthropic-beta: oauth-2025-04-20`) |
-| `openai-codex` | Per-account 5h / 7d plus the plan | `GET https://chatgpt.com/backend-api/wham/usage` (`ChatGPT-Account-Id` is extracted from the access-token JWT) |
+| `anthropic-subscription` (`claude-sdk-oauth` before senpi 2026.9.22) | Per-account 5h / 7d / per-model weekly limits | `GET https://api.anthropic.com/api/oauth/usage` (`anthropic-beta: oauth-2025-04-20`) |
+| `chatgpt-subscription` (`openai-codex` before senpi 2026.9.22) | Per-account 5h / 7d plus the plan | `GET https://chatgpt.com/backend-api/wham/usage` (`ChatGPT-Account-Id` is extracted from the access-token JWT) |
 | `xai` | Weekly credit pool remaining plus the per-product breakdown | `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits` — the same endpoint as Grok CLI's `/usage`. omo's xai token is issued by the same OIDC client as Grok CLI, so the bearer alone gets through |
 | `kimi-coding` | Per-account 5h / 7d | `GET https://api.kimi.com/coding/v1/usages` — omo's Kimi subscription OAuth token (issued through the same device flow as Kimi CLI) is used as the bearer as is |
 | `google` | — (`n/a`) | No published usage API |

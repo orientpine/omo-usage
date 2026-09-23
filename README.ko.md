@@ -19,7 +19,7 @@ omo-ai(senpi)에 로그인된 **모든 계정의 잔여 사용량**과 **지금 
   omo-ai account usage                    accounts 7 · ok 5 · updated 14:00:00
   ────────────────────────────────────────────────────────────────────────────
 
-  claude-sdk-oauth
+  anthropic-subscription
   ▶ alice (pinned) 5h    ██████████████████░░  88% 16:00 · in 2h
   │                7d    ████████████░░░░░░░░  61% 9/22 14:00 · in 3d
   │                Fable ███████████████████░  96% 9/22 14:00 · in 3d
@@ -33,7 +33,7 @@ omo-ai(senpi)에 로그인된 **모든 계정의 잔여 사용량**과 **지금 
   ● carol          expired · senpi refreshes it on next use · no re-login
   │                last used 14h ago
 
-  openai-codex
+  chatgpt-subscription
   ● ann (pro)      7d    ██████████████░░░░░░  71% 9/23 14:00 · in 4d
 
   ● dana (team)    5h    ████████████████████ 100% 15:00 · in 1h
@@ -111,7 +111,7 @@ senpi가 쓰는 두 파일을 열어 볼 뿐 한 바이트도 쓰지 않는다. 
 ```json
 [
   {
-    "provider": "claude-sdk-oauth",
+    "provider": "anthropic-subscription",
     "slot": "default",
     "label": "alice",
     "status": "ok",
@@ -145,10 +145,10 @@ omo-usage --json | jq -r --argjson now "$(date +%s000)" '.[] | select(.lastUsedA
 ## FAQ
 
 **지금 senpi가 어느 계정을 차감하고 있는지 알 수 있나?**
-`▶`가 붙은 계정이다. senpi는 요청이 성공할 때마다 `~/.omo/agent/credential-pool-state.json`에 그 슬롯의 `lastSuccessAt`을 적고, omo-usage는 그 값이 10분 이내인 슬롯을 `in use`으로 표시한다. TUI는 이 파일만 5초마다 다시 읽으므로 사용량 조회 주기(150초)와 무관하게 바로 따라온다. "지금 이 계정 하나"라고 단정하지 않는 이유가 있다: senpi는 세션마다 해시로 계정을 고르고(고정 계정이 있으면 그것을 우선), 세션이 여럿이면 여러 계정이 동시에 차감된다. 그래서 `▶`는 둘 이상일 수 있고, 옆의 `just now`·`3m ago`가 판단 근거다. Codex·xAI·kimi-coding은 senpi가 이 기록을 남기지 않는다(`openai-codex`·`kimi-coding`의 `stored/slots`가 비어 있고 xai는 항목 자체가 없다). 그래서 TUI는 이 셋을 직전 조회와 잔여를 비교하는 방식으로 대신한다 — 잔여가 줄었으면 `▶ … in use · -3% since poll 2m ago`. 정확한 시각이 아니라 150초 조회 주기 안 어딘가이며, 리셋으로 잔여가 느는 건 차감으로 치지 않는다. google은 사용량 API가 없다.
+`▶`가 붙은 계정이다. senpi는 요청이 성공할 때마다 `~/.omo/agent/credential-pool-state.json`에 그 슬롯의 `lastSuccessAt`을 적고, omo-usage는 그 값이 10분 이내인 슬롯을 `in use`으로 표시한다. TUI는 이 파일만 5초마다 다시 읽으므로 사용량 조회 주기(150초)와 무관하게 바로 따라온다. "지금 이 계정 하나"라고 단정하지 않는 이유가 있다: senpi는 세션마다 해시로 계정을 고르고(고정 계정이 있으면 그것을 우선), 세션이 여럿이면 여러 계정이 동시에 차감된다. 그래서 `▶`는 둘 이상일 수 있고, 옆의 `just now`·`3m ago`가 판단 근거다. Codex·xAI·kimi-coding은 senpi가 이 기록을 남기지 않는다(`chatgpt-subscription`·`kimi-coding`의 `stored/slots`가 비어 있고 xai는 항목 자체가 없다). 그래서 TUI는 이 셋을 직전 조회와 잔여를 비교하는 방식으로 대신한다 — 잔여가 줄었으면 `▶ … in use · -3% since poll 2m ago`. 정확한 시각이 아니라 150초 조회 주기 안 어딘가이며, 리셋으로 잔여가 느는 건 차감으로 치지 않는다. google은 사용량 API가 없다.
 
 **"만료"라는데 다시 로그인해야 하나?**
-대개 아니다. 액세스 토큰 만료는 정상이고, refresh token이 살아 있으면 senpi가 그 계정을 다음에 쓰는 순간 자동 갱신한다. omo-usage는 auth.json을 읽기만 하므로 갱신을 대신 해 주지 못하고(직접 refresh하면 refresh token이 회전돼 senpi 저장본이 깨진다) 만료 상태를 그대로 보여줄 뿐이다. 재로그인이 필요한 건 `refresh failed`가 붙은 경우뿐이며, 그때는 omo TUI에서 `/login claude-sdk-oauth`를 실행하고 이름 프롬프트에 기존 슬롯 이름을 입력하면 제자리에서 교체된다.
+대개 아니다. 액세스 토큰 만료는 정상이고, refresh token이 살아 있으면 senpi가 그 계정을 다음에 쓰는 순간 자동 갱신한다. omo-usage는 auth.json을 읽기만 하므로 갱신을 대신 해 주지 못하고(직접 refresh하면 refresh token이 회전돼 senpi 저장본이 깨진다) 만료 상태를 그대로 보여줄 뿐이다. 재로그인이 필요한 건 `refresh failed`가 붙은 경우뿐이며, 그때는 omo TUI에서 `/login anthropic-subscription`를 실행하고 이름 프롬프트에 기존 슬롯 이름을 입력하면 제자리에서 교체된다.
 
 **`omo auth login` 같은 셸 명령은 없나?**
 없다. `omo auth`에는 `check` / `print-api-key` / `print-bearer-token`뿐이다. 로그인은 TUI 안의 `/login <provider>` 또는 `/claude-account add`다.
@@ -166,8 +166,8 @@ auth.json은 읽기 전용으로 열고, 토큰은 fetch 호출에만 쓴다. �
 
 | provider | 보여주는 것 | 어디서 |
 | --- | --- | --- |
-| `claude-sdk-oauth` | 계정별 5h / 7d / 모델별 주간 한도 | `GET https://api.anthropic.com/api/oauth/usage` (`anthropic-beta: oauth-2025-04-20`) |
-| `openai-codex` | 계정별 5h / 7d + 플랜 | `GET https://chatgpt.com/backend-api/wham/usage` (`ChatGPT-Account-Id`는 액세스 토큰 JWT에서 추출) |
+| `anthropic-subscription` (senpi 2026.9.22 이전 `claude-sdk-oauth`) | 계정별 5h / 7d / 모델별 주간 한도 | `GET https://api.anthropic.com/api/oauth/usage` (`anthropic-beta: oauth-2025-04-20`) |
+| `chatgpt-subscription` (senpi 2026.9.22 이전 `openai-codex`) | 계정별 5h / 7d + 플랜 | `GET https://chatgpt.com/backend-api/wham/usage` (`ChatGPT-Account-Id`는 액세스 토큰 JWT에서 추출) |
 | `xai` | 주간 크레딧 풀 잔여 + 제품별 내역 | `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits` — Grok CLI `/usage`와 같은 엔드포인트. omo의 xai 토큰이 Grok CLI와 같은 OIDC 클라이언트로 발급돼 베어러만으로 통과 |
 | `kimi-coding` | 계정별 5h / 7d | `GET https://api.kimi.com/coding/v1/usages` — omo의 kimi 구독 OAuth 토큰(Kimi CLI와 같은 device flow로 발급)을 베어러로 그대로 사용 |
 | `google` | — (`n/a`) | 공개된 사용량 API 없음 |
