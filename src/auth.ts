@@ -1,7 +1,13 @@
 import type { AccountRow, AccountStatus } from "./types.ts";
 
-/** usage API를 가진 provider와 그 종류. 여기 없는 provider는 전부 unsupported로 표시한다. */
+/**
+ * usage API를 가진 provider와 그 종류. 여기 없는 provider는 전부 unsupported로 표시한다.
+ * senpi 2026.9.22(#1989)에서 claude-sdk-oauth -> anthropic-subscription, openai-codex -> chatgpt-subscription으로
+ * 개명됐고 auth.json 키도 한 번 옮겨진다. 옛 id는 그 이전 senpi를 쓰는 사람을 위해 남겨 둔다.
+ */
 export const USAGE_PROVIDERS = {
+	"anthropic-subscription": "claude",
+	"chatgpt-subscription": "codex",
 	"claude-sdk-oauth": "claude",
 	"openai-codex": "codex",
 	xai: "xai",
@@ -11,7 +17,7 @@ export const USAGE_PROVIDERS = {
 export type UsageKind = (typeof USAGE_PROVIDERS)[keyof typeof USAGE_PROVIDERS];
 
 /** 화면에 고정으로 쓰는 provider 순서. 나머지는 이름순으로 뒤에 붙는다. */
-const PROVIDER_ORDER = ["claude-sdk-oauth", "openai-codex", "xai", "kimi-coding", "google"];
+const PROVIDER_ORDER = ["anthropic-subscription", "chatgpt-subscription", "claude-sdk-oauth", "openai-codex", "xai", "kimi-coding", "google"];
 
 function record(value: unknown): Record<string, unknown> | null {
 	return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;

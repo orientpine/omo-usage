@@ -130,6 +130,44 @@ describe("buildRoster", () => {
 		expect(rows.find((r) => r.slot === "first")?.pinned).toBeUndefined();
 	});
 
+	test("senpi 2026.9.22 개명 id(anthropic-subscription·chatgpt-subscription)도 조회 대상이고 맨 앞에 선다", () => {
+		const rows = buildRoster(
+			{
+				google: { type: "api_key", key: "k" },
+				xai: { type: "oauth", access: "a", refresh: "r", expires: future },
+				"chatgpt-subscription": {
+					type: "oauth",
+					access: "a",
+					refresh: "r",
+					expires: future,
+					accountId: "acc",
+					pinned: "default",
+					accounts: [
+						{ name: "default", displayName: "cbd", access: "a", refresh: "r", expires: future, source: "login" },
+						{ name: "login-2", displayName: "dxlab", access: "a", refresh: "r", expires: future, source: "login" },
+					],
+				},
+				// 최상위 access/expires는 senpi가 넣은 자리표시(managed sentinel)다. accounts가 있으면 그쪽만 본다.
+				"anthropic-subscription": {
+					type: "oauth",
+					access: "sentinel",
+					refresh: "sentinel",
+					expires: 4102444800000,
+					accounts: [{ name: "default", displayName: "baek", access: "a", refresh: "r", expires: future, source: "login" }],
+				},
+			},
+			NOW,
+		);
+		expect(rows.map((r) => `${r.provider}/${r.slot}/${r.status}`)).toEqual([
+			"anthropic-subscription/default/loading",
+			"chatgpt-subscription/default/loading",
+			"chatgpt-subscription/login-2/loading",
+			"xai/default/loading",
+			"google/default/unsupported",
+		]);
+		expect(rows.find((r) => r.provider === "chatgpt-subscription" && r.slot === "default")?.pinned).toBe(true);
+	});
+
 	test("빈 auth.json이면 빈 배열", () => {
 		expect(buildRoster({}, NOW)).toEqual([]);
 		expect(buildRoster(null, NOW)).toEqual([]);

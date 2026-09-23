@@ -148,6 +148,33 @@ describe("collectUsage · 잔여 감소 감지 (pool 기록이 없는 provider)"
 	});
 });
 
+describe("collectUsage · senpi 2026.9.22 provider 개명", () => {
+	test("anthropic-subscription은 Anthropic, chatgpt-subscription은 Codex usage 엔드포인트로 간다", async () => {
+		const seen = new Map<string, { url: string; headers: Headers }>();
+		const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+			const headers = new Headers(init?.headers);
+			seen.set(String(headers.get("authorization")), { url: String(url), headers });
+			const body = String(url).includes("anthropic") ? OK_BODY : { plan_type: "plus", rate_limit: { primary_window: { used_percent: 25, limit_window_seconds: 18000, reset_at: 1789643871 } } };
+			return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+		}) as unknown as typeof fetch;
+		const rows = await collectUsage(
+			{
+				"anthropic-subscription": { type: "oauth", access: "sentinel", expires: 4102444800000, accounts: [{ name: "default", access: "tok-claude", refresh: "r", expires: future }] },
+				"chatgpt-subscription": { type: "oauth", access: "tok-gpt", refresh: "r", expires: future, accountId: "acc-1" },
+			},
+			{ fetchImpl, now: NOW },
+		);
+		expect(seen.get("Bearer tok-claude")?.url).toBe("https://api.anthropic.com/api/oauth/usage");
+		expect(seen.get("Bearer tok-claude")?.headers.get("anthropic-beta")).toBe("oauth-2025-04-20");
+		expect(seen.get("Bearer tok-gpt")?.url).toBe("https://chatgpt.com/backend-api/wham/usage");
+		expect(seen.get("Bearer tok-gpt")?.headers.get("chatgpt-account-id")).toBe("acc-1");
+		const byProvider = (provider: string) => rows.find((r) => r.provider === provider);
+		expect(byProvider("anthropic-subscription")?.windows.map((w) => w.remainingPercent)).toEqual([84, 56]);
+		expect(byProvider("chatgpt-subscription")?.plan).toBe("plus");
+		expect(byProvider("chatgpt-subscription")?.windows.map((w) => `${w.label} ${w.remainingPercent}`)).toEqual(["5h 75"]);
+	});
+});
+
 describe("collectUsage · xai", () => {
 	const XAI_AUTH = { xai: { type: "oauth", access: "tok-xai", refresh: "r", expires: future } };
 	const XAI_BODY = {
