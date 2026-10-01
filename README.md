@@ -142,6 +142,30 @@ omo-usage --json | jq -r '.[] | select(.status=="ok") | "\(.provider)/\(.label)\
 omo-usage --json | jq -r --argjson now "$(date +%s000)" '.[] | select(.lastUsedAt != null and $now - .lastUsedAt < 600000) | .label'
 ```
 
+## Footer line in omo
+
+The same data also fits in **one line under omo's own footer**, so you can see it without leaving the session. The built-in footer stays exactly as it is; this line is added below it.
+
+```sh
+omo install https://github.com/orientpine/omo-usage   # then start omo, or run /reload in an open session
+```
+
+```
+Claude·orientpine ▕███████████░░░▏ 76% 7d · resets 10/02 18:00 │ pool ✗▇ │ ⚠ Codex·dxlab 7d 4%
+└──────────────── ① this session's account ────────────────────┘ └ ② pool ┘ └─ ③ exceptions ─┘
+```
+
+- **① This session's account**, at its *binding* window only — the window with the least left, which is the one that will actually stop you (here 7d at 76%, not 5h or Fable). Same bar and colors as the dashboard.
+- **② pool**: one cell per other account of the same provider. Cell height (`▁`…`█`) is that account's binding window, color is its level, `✗` means no numbers (yellow: expired but senpi refreshes it on next use; red: error or re-login needed). senpi fails over between these, so tall cells mean you have room even when ① runs low.
+- **③ exceptions**: other providers stay hidden unless one is red (< 20%) or needs a re-login; then the first one shows, the rest as `+N`.
+- **Narrow terminals** drop ③, then ②, then the reset time, then shorten the bar, and finally cut with `…`. The line never wraps.
+- **Which account is "this session's"?** The same one omo's own footer names as `(provider@slot)`. senpi has no API that returns it, so the line recomputes it with senpi's own rule: the pinned slot if there is one, otherwise the slot that wins the session-id rendezvous hash (the hash senpi uses to pick an account per session). Only slot names and the session id are used, never a token. If the session id is unavailable it does not guess: ① shows just the provider and ② lists every account.
+- **Refresh**: usage is fetched every **5 minutes**, well clear of Anthropic's ~95-second 429 window. A 429 keeps the previous values and the line shows `retry HH:MM` instead of the reset time until then. Switching models (`/model`, Ctrl+P) or the end of a reply only re-matches the account; it does not fetch.
+- Each omo session runs its own fetch, so many sessions at once mean more usage calls (still at most one per account per 5 minutes per session).
+
+> [!NOTE]
+> senpi has no official API to *add* a footer line (`setStatus` shares one line among all extensions, `setFooter` replaces the whole footer), so like [asmond-lab/omo-usage](https://github.com/asmond-lab/omo-usage) this extends the built-in `FooterComponent`'s output. A future senpi release could change that component; if it is missing, the line falls back to the shared status line.
+
 ## FAQ
 
 **Can I tell which account senpi is spending right now?**
@@ -213,7 +237,10 @@ src/
   pool.ts         credential-pool-state.json -> last drain time per slot (the in-use marker)
   credentials.ts  token map (kept apart from the screen state)
   render.ts       frame rendering: width math, color, the ● / ▶ / │ guides
+  footer.ts       omo footer line (① account · ② pool · ③ exceptions), 5-minute poller, senpi extension wiring
   types.ts        AccountRow, UsageWindow
+extension/
+  index.js        senpi extension entry (host-provided FooterComponent + truncateToWidth -> src/footer.ts)
 ```
 
 ## License

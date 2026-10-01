@@ -142,6 +142,30 @@ omo-usage --json | jq -r '.[] | select(.status=="ok") | "\(.provider)/\(.label)\
 omo-usage --json | jq -r --argjson now "$(date +%s000)" '.[] | select(.lastUsedAt != null and $now - .lastUsedAt < 600000) | .label'
 ```
 
+## omo footer 한 줄
+
+같은 정보를 **omo 자체 footer 아래 한 줄**로도 볼 수 있어서, 세션을 떠나지 않고 확인할 수 있다. 내장 footer는 그대로 두고 그 아래에 한 줄만 붙는다.
+
+```sh
+omo install https://github.com/orientpine/omo-usage   # 그다음 omo를 시작하거나, 열린 세션에서 /reload
+```
+
+```
+Claude·orientpine ▕███████████░░░▏ 76% 7d · resets 10/02 18:00 │ pool ✗▇ │ ⚠ Codex·dxlab 7d 4%
+└──────────────── ① 이 세션의 계정 ────────────────────────────┘ └ ② pool ┘ └─ ③ 예외 ─┘
+```
+
+- **① 이 세션의 계정**은 *막는 창* 하나만 보인다 — 남은 비율이 가장 낮아 실제로 사용을 멈추게 할 창이다(여기선 5h·Fable이 아니라 76%인 7d). 막대와 색은 대시보드와 같다.
+- **② pool**: 같은 provider의 나머지 계정을 한 칸씩. 칸 높이(`▁`…`█`)는 그 계정의 막는 창, 색은 레벨, `✗`는 숫자가 없다는 뜻이다(노랑: 만료지만 senpi가 다음에 쓸 때 갱신, 빨강: 오류나 재로그인 필요). senpi는 이 계정들 사이를 자동으로 넘겨 쓰므로, ①이 바닥나도 칸이 높으면 여유가 있다.
+- **③ 예외**: 다른 provider는 평소엔 숨기고, 빨강(20% 미만)이거나 재로그인이 필요할 때만 첫 하나를 보이며 나머지는 `+N`.
+- **좁은 터미널**에서는 ③ → ② → 리셋 시각 → 막대 길이 순으로 덜어내고, 마지막엔 `…`로 자른다. 줄이 넘어가지 않는다.
+- **"이 세션의 계정"은 어떻게 아나?** omo 자체 footer가 `(provider@slot)`으로 보여주는 바로 그 계정이다. senpi에는 그것을 돌려주는 API가 없어서 senpi와 같은 규칙으로 다시 계산한다: 고정 슬롯이 있으면 그것, 없으면 세션 id로 매긴 rendezvous 해시 1위(senpi가 세션마다 계정을 고를 때 쓰는 그 해시). 슬롯 이름과 세션 id만 쓰고 토큰은 쓰지 않는다. 세션 id를 못 얻으면 단정하지 않는다: ①은 provider 이름만, ②에 모든 계정을 보인다.
+- **갱신**: 사용량은 **5분**마다 조회한다(Anthropic의 약 95초 429 창보다 넉넉히 길게). 429가 오면 이전 값을 유지하고, 그동안은 리셋 시각 대신 `retry HH:MM`을 보인다. 모델을 바꾸거나(`/model`, Ctrl+P) 답이 끝날 때는 계정만 다시 맞추고 조회는 하지 않는다.
+- omo 세션마다 각자 조회하므로 세션이 많으면 호출도 그만큼 는다(세션당 계정마다 5분에 최대 한 번).
+
+> [!NOTE]
+> senpi에는 footer에 줄을 *덧붙이는* 공식 API가 없다(`setStatus`는 모든 확장이 한 줄을 나눠 쓰고, `setFooter`는 footer를 통째로 바꾼다). 그래서 [asmond-lab/omo-usage](https://github.com/asmond-lab/omo-usage)처럼 내장 `FooterComponent`의 출력 뒤에 한 줄을 붙인다. 이후 senpi가 그 컴포넌트를 바꿀 수 있고, 없으면 공유 상태줄로 대신 보인다.
+
 ## FAQ
 
 **지금 senpi가 어느 계정을 차감하고 있는지 알 수 있나?**
@@ -213,7 +237,10 @@ src/
   pool.ts         credential-pool-state.json → 슬롯별 마지막 차감 시각 (▶ 사용 중)
   credentials.ts  토큰 맵 (화면 상태와 분리)
   render.ts       프레임 렌더: 폭 계산, 색, ● / ▶ / │ 가이드
+  footer.ts       omo footer 한 줄 (① 계정 · ② pool · ③ 예외), 5분 조회기, senpi 확장 연결
   types.ts        AccountRow, UsageWindow
+extension/
+  index.js        senpi 확장 진입점 (호스트의 FooterComponent + truncateToWidth → src/footer.ts)
 ```
 
 ## 라이선스
