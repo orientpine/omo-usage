@@ -178,44 +178,113 @@ describe("createUsagePoller", () => {
 });
 
 describe("createFooterExtension", () => {
-	test("session_start 뒤 내장 footer 아래에 지금 슬롯 기준 한 줄을 붙이고, shutdown이면 뗀다", async () => {
-		class FakeFooter {
-			render(_width: number): string[] {
-				return ["built-in footer"];
-			}
-		}
-		const handlers = new Map<string, (event: unknown, ctx: ExtensionContextLike) => unknown>();
-		const fetchImpl = (async () => new Response(JSON.stringify(OK_BODY), { status: 200 })) as unknown as typeof fetch;
-		const extension = createFooterExtension(
-			{ FooterComponent: FakeFooter },
-			{ readAuth: async () => AUTH, readPool: async () => null, fetchImpl, now: () => NOW, setTimer: () => 0, clearTimer: () => {} },
-		);
-		extension({ on: (event, handler) => void handlers.set(event, handler) });
+	type SetWidget = NonNullable<ExtensionContextLike["ui"]["setWidget"]>;
+	interface WidgetCall {
+		readonly key: string;
+		readonly content: string[] | undefined;
+		readonly placement: string | undefined;
+	}
 
-		let painted: () => void = () => {};
-		const repainted = new Promise<void>((resolve) => {
-			painted = resolve;
+	function setup(setWidget: SetWidget | undefined, cols = { value: 120 }) {
+		const handlers = new Map<string, (event: unknown, ctx: ExtensionContextLike) => unknown>();
+		let fetches = 0;
+		let resize: () => void = () => {};
+		let unsubscribed = false;
+		const fetchImpl = (async () => {
+			fetches++;
+			return new Response(JSON.stringify(OK_BODY), { status: 200 });
+		}) as unknown as typeof fetch;
+		const extension = createFooterExtension({
+			readAuth: async () => AUTH,
+			readPool: async () => null,
+			fetchImpl,
+			now: () => NOW,
+			setTimer: () => 0,
+			clearTimer: () => {},
+			columns: () => cols.value,
+			onResize: (listener) => {
+				resize = listener;
+				return () => {
+					unsubscribed = true;
+				};
+			},
 		});
+		extension({ on: (event, handler) => void handlers.set(event, handler) });
 		const ctx: ExtensionContextLike = {
 			hasUI: true,
 			model: { provider: "anthropic-subscription", id: "claude-fable-5-1" },
 			modelRegistry: { authStorage: { get: (provider) => (provider === "anthropic-subscription" ? { ...AUTH["anthropic-subscription"], pinned: "bob" } : undefined) } },
 			sessionManager: { getSessionId: () => "session-1" },
-			ui: {
-				setStatus: () => {
-					if (new FakeFooter().render(120).length > 1) painted();
-				},
-				notify: () => {},
-			},
+			ui: { setWidget, notify: () => {} },
 		};
-		await handlers.get("session_start")?.({ reason: "startup" }, ctx);
-		await Promise.race([repainted, new Promise((_, reject) => setTimeout(() => reject(new Error("footer was never repainted with a usage line")), 2_000))]);
+		return { handlers, ctx, fetches: () => fetches, resize: () => resize(), unsubscribed: () => unsubscribed };
+	}
 
-		const lines = new FakeFooter().render(120).map(strip);
-		expect(lines[0]).toBe("built-in footer");
-		expect(lines[1]).toMatch(/^Claude·bob ▕[█░]{14}▏ 56% 7d · resets .* │ pool ▅$/);
+	/** 조회가 끝나 첫 줄이 그려지는 그 setWidget 호출 자체를 기다린다 (시간 대기 없이). */
+	function recorder() {
+		const calls: WidgetCall[] = [];
+		let drawn: () => void = () => {};
+		const firstDraw = new Promise<void>((resolve) => {
+			drawn = resolve;
+		});
+		const setWidget: SetWidget = (key, content, options) => {
+			calls.push({ key, content, placement: options?.placement });
+			if (content !== undefined) drawn();
+		};
+		const waitFirstDraw = () => Promise.race([firstDraw, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("widget was never drawn")), 2_000))]);
+		return { calls, setWidget, waitFirstDraw };
+	}
+
+	test("편집기 아래(belowEditor) 위젯으로 지금 슬롯 기준 한 줄을 그리고, 폭이 바뀌면 다시 맞추며, shutdown이면 지운다", async () => {
+		const cols = { value: 120 };
+		const widget = recorder();
+		const { handlers, ctx, resize, unsubscribed } = setup(widget.setWidget, cols);
+		await handlers.get("session_start")?.({ reason: "startup" }, ctx);
+		await widget.waitFirstDraw();
+
+		const first = widget.calls.find((call) => call.content !== undefined);
+		expect(first?.key).toBe("omo-usage");
+		expect(first?.placement).toBe("belowEditor");
+		expect(first?.content?.length).toBe(1);
+		expect(strip(first?.content?.[0] ?? "")).toMatch(/^Claude·bob ▕[█░]{14}▏ 56% 7d · resets .* │ pool ▅$/);
+
+		cols.value = 50;
+		resize();
+		const narrow = strip(widget.calls.at(-1)?.content?.[0] ?? "");
+		expect(narrow).toMatch(/^Claude·bob ▕[█░]{14}▏ 56% 7d$/);
+		// senpi는 위젯 줄 좌우에 1칸씩 여백을 두므로 터미널 50칸이면 줄은 48칸 안에 들어와야 넘어가지 않는다
+		expect(displayWidth(narrow)).toBeLessThanOrEqual(48);
 
 		await handlers.get("session_shutdown")?.({ reason: "quit" }, ctx);
-		expect(new FakeFooter().render(120)).toEqual(["built-in footer"]);
+		expect(widget.calls.at(-1)?.content).toBeUndefined();
+		expect(unsubscribed()).toBe(true);
+	});
+
+	test("setWidget이 없으면 아무것도 그리지 않고 조회도 하지 않는다", async () => {
+		const { handlers, ctx, fetches } = setup(undefined);
+		await handlers.get("session_start")?.({ reason: "startup" }, ctx);
+		await handlers.get("model_select")?.({}, ctx);
+		await handlers.get("session_shutdown")?.({ reason: "quit" }, ctx);
+		expect(fetches()).toBe(0);
+	});
+
+	test("setWidget이 던지면 조용히 빠진다: 예외를 올리지 않고 다시 그리지도 않는다", async () => {
+		let calls = 0;
+		let thrown: () => void = () => {};
+		const threw = new Promise<void>((resolve) => {
+			thrown = resolve;
+		});
+		const { handlers, ctx, resize } = setup(() => {
+			calls++;
+			thrown();
+			throw new Error("widget host gone");
+		});
+		await handlers.get("session_start")?.({ reason: "startup" }, ctx);
+		await Promise.race([threw, new Promise((_, reject) => setTimeout(() => reject(new Error("setWidget was never called")), 2_000))]);
+
+		resize();
+		await handlers.get("model_select")?.({}, ctx);
+		await handlers.get("session_shutdown")?.({ reason: "quit" }, ctx);
+		expect(calls).toBe(1);
 	});
 });

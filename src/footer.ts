@@ -7,8 +7,12 @@ import { BAR_CELLS, BAR_EMPTY, LEVEL_RED, clock, compose, displayWidth, levelCol
 
 /** 소유자가 정한 조회 간격 (2026-10-01): Anthropic usage의 토큰당 429 창(약 95초)과 대시보드 TUI(150초)에 겹쳐도 429를 피할 만큼 넉넉하게. */
 export const FOOTER_REFRESH_MS = 300_000;
-/** footer가 다시 그려 달라고 요청할 때 쓰는 상태 키. 값 없이 지우는 것이 확장 API의 repaint 요청이다 (asmond-lab/omo-usage와 같은 방식). */
-const STATUS_KEY = "zz-omo-usage";
+const WIDGET_KEY = "omo-usage";
+/**
+ * 위젯 줄이 터미널 폭보다 덜 받는 칸 수. senpi는 문자열 위젯 한 줄을 `new Text(line, 1, 0)`(좌우 1칸 여백)으로 그리고,
+ * 남는 폭보다 긴 줄은 자르지 않고 다음 줄로 넘긴다 (senpi 2026.9.30 dist/modes/interactive/interactive-mode.js:2520, pi-tui components/text.js:44).
+ */
+const WIDGET_GUTTER = 2;
 const MIN_BAR_CELLS = 4;
 const LOW_PERCENT = 20;
 const DIM = "90";
@@ -210,13 +214,16 @@ interface ModelLike {
 /** senpi ExtensionContext 중 이 확장이 쓰는 부분만 (senpi 2026.9.30 core/extensions/types.d.ts:351,355, core/model-registry.d.ts:26). */
 export interface ExtensionContextLike {
 	readonly hasUI: boolean;
+	/** "tui" | "rpc" | "json" | "print". RPC 모드의 setWidget은 터미널 대신 JSON 요청을 내보내므로 TUI에서만 그린다. */
+	readonly mode?: string | undefined;
 	readonly model?: ModelLike | undefined;
 	readonly modelRegistry: {
 		readonly authStorage?: { get(provider: string): unknown } | undefined;
 	};
 	readonly sessionManager?: { getSessionId(): string } | undefined;
 	readonly ui: {
-		setStatus(key: string, text: string | undefined): void;
+		/** 공식 위젯 API (docs/extensions.md "Widgets, Status, and Footer"). 없는 호스트도 있어 선택 항목이다. */
+		setWidget?: ((key: string, content: string[] | undefined, options?: { placement?: "aboveEditor" | "belowEditor" }) => void) | undefined;
 		notify(message: string, level: "info" | "warning" | "error"): void;
 	};
 }
@@ -225,34 +232,16 @@ export interface ExtensionApiLike {
 	on(event: string, handler: (event: unknown, ctx: ExtensionContextLike) => unknown): void;
 }
 
-interface FooterClass {
-	readonly prototype: { render(width: number): string[] };
+export interface FooterDeps extends PollerDeps {
+	/** 위젯 줄을 맞출 터미널 폭. 기본은 process.stdout.columns. */
+	readonly columns?: () => number;
+	/** 터미널 크기 변경 구독 (해제 함수를 돌려준다). 기본은 process.stdout "resize". */
+	readonly onResize?: (listener: () => void) => () => void;
 }
 
-/** 호스트(senpi)가 주는 것: 내장 footer 컴포넌트와 그 TUI의 폭 계산으로 자르는 함수. 둘 다 없으면 공유 상태줄로 대신한다. */
-export interface FooterHost {
-	readonly FooterComponent?: FooterClass | undefined;
-	readonly fit?: ((text: string, width: number) => string) | undefined;
-}
-
-/** 모든 확장 인스턴스(/reload 포함)가 공유하는, footer 아래에 붙일 줄. */
-let footerLine: (width: number) => string = () => "";
-const patchedFooters = new WeakSet<FooterClass>();
-
-/**
- * senpi에는 footer에 줄을 "덧붙이는" API가 없다: setStatus는 모든 확장이 한 줄을 나눠 써서 막대가 잘리고, setFooter는 내장 footer를 통째로 바꾼다.
- * 그래서 asmond-lab/omo-usage처럼 내장 FooterComponent의 render 결과 뒤에 한 줄을 붙인다 — 내장 footer는 그대로 그려진다.
- */
-function appendFooterLine(component: FooterClass, fit: FooterHost["fit"]): void {
-	if (patchedFooters.has(component)) return;
-	patchedFooters.add(component);
-	const render = component.prototype.render;
-	component.prototype.render = function renderWithUsage(this: unknown, width: number): string[] {
-		const lines = render.call(this, width);
-		const line = footerLine(width);
-		if (line.length === 0) return lines;
-		return [...lines, fit ? fit(line, width) : line];
-	};
+function stdoutResize(listener: () => void): () => void {
+	process.stdout.on("resize", listener);
+	return () => process.stdout.off("resize", listener);
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -300,36 +289,60 @@ async function resolveFocus(ctx: ExtensionContextLike, readAuth: () => Promise<u
 	return { provider: model.provider, slot: sessionSlot(credential, ctx.sessionManager?.getSessionId() ?? null) };
 }
 
-/** senpi 확장 팩토리. 타이머·조회는 session_start에서 시작하고 session_shutdown에서 멈춘다 (팩토리에서 시작하지 않는다). */
-export function createFooterExtension(host: FooterHost, deps: PollerDeps = {}): (pi: ExtensionApiLike) => void {
+/**
+ * senpi 확장 팩토리. 줄은 공식 위젯 API로 편집기 아래(belowEditor)에 한 줄로 그린다 (소유자 결정 2026-10-01: 내장 footer 패치 대신).
+ * setWidget이 없거나 던지면 아무것도 그리지 않고 조회도 멈춘 채 조용히 빠진다.
+ * 타이머·조회는 session_start에서 시작하고 session_shutdown에서 멈춘다 (팩토리에서 시작하지 않는다).
+ */
+export function createFooterExtension(deps: FooterDeps = {}): (pi: ExtensionApiLike) => void {
 	return function omoUsageFooter(pi: ExtensionApiLike): void {
 		const now = deps.now ?? Date.now;
 		const readAuth = deps.readAuth ?? (() => readAuthFile());
+		const columns = deps.columns ?? (() => process.stdout.columns ?? 80);
 		let poller: UsagePoller | null = null;
 		let focus: FooterFocus | null = null;
 		let latest: ExtensionContextLike | null = null;
 		let lastError: string | null = null;
-		let redraw = (): void => {};
+		let show: ((line: string | undefined) => void) | null = null;
+		let shown: string | undefined;
+		let stopResize: (() => void) | null = null;
 
-		const lineFor = (width: number): string => (poller !== null && focus !== null ? renderFooter(poller.rows(), focus, width, now()) : "");
+		const draw = (): void => {
+			if (show === null) return;
+			const line = poller !== null && focus !== null ? renderFooter(poller.rows(), focus, columns() - WIDGET_GUTTER, now()) : "";
+			const next = line.length > 0 ? line : undefined;
+			if (next === shown) return;
+			shown = next;
+			show(next);
+		};
+
+		const bowOut = (): void => {
+			show = null;
+			poller?.stop();
+			stopResize?.();
+			stopResize = null;
+		};
 
 		const refocus = async (ctx: ExtensionContextLike): Promise<void> => {
+			if (show === null) return;
 			latest = ctx;
 			focus = await resolveFocus(ctx, readAuth);
-			redraw();
+			draw();
 		};
 
 		pi.on("session_start", async (_event, ctx) => {
-			if (!ctx.hasUI) return;
+			if (!ctx.hasUI || (ctx.mode !== undefined && ctx.mode !== "tui") || typeof ctx.ui.setWidget !== "function") return;
 			latest = ctx;
-			if (host.FooterComponent) {
-				appendFooterLine(host.FooterComponent, host.fit);
-				footerLine = lineFor;
-				redraw = () => ctx.ui.setStatus(STATUS_KEY, undefined);
-			} else {
-				// 내장 footer를 못 받으면 공유 상태줄에라도 보인다 (다른 확장 상태와 한 줄을 나눠 써서 잘릴 수 있다).
-				redraw = () => ctx.ui.setStatus(STATUS_KEY, lineFor(process.stdout.columns ?? 120) || undefined);
-			}
+			shown = undefined;
+			show = (line) => {
+				try {
+					ctx.ui.setWidget?.(WIDGET_KEY, line === undefined ? undefined : [line], { placement: "belowEditor" });
+				} catch {
+					// 공식 위젯 API가 실패하면 그리기를 포기한다 — 화면을 망가뜨리거나 오류를 띄우지 않는다.
+					bowOut();
+				}
+			};
+			stopResize = (deps.onResize ?? stdoutResize)(draw);
 			poller = createUsagePoller(
 				() => {
 					if (latest !== null) void refocus(latest);
@@ -350,13 +363,12 @@ export function createFooterExtension(host: FooterHost, deps: PollerDeps = {}): 
 		// senpi가 실패 시 다른 계정으로 넘길 수 있으니 답이 끝날 때마다 슬롯만 다시 맞춘다 (사용량 조회는 하지 않는다).
 		pi.on("agent_end", (_event, ctx) => refocus(ctx));
 		pi.on("session_shutdown", () => {
-			poller?.stop();
+			if (show !== null && shown !== undefined) show(undefined);
+			bowOut();
 			poller = null;
 			focus = null;
 			latest = null;
-			footerLine = () => "";
-			redraw();
-			redraw = () => {};
+			shown = undefined;
 		});
 	};
 }
