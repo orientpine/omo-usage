@@ -8,7 +8,7 @@ export interface AppState {
 	readonly now: number;
 }
 
-interface Part {
+export interface Part {
 	readonly t: string;
 	readonly c?: string;
 }
@@ -33,11 +33,11 @@ const RED = "31";
  * 막대 표시 방식은 asmond-lab/omo-usage(footer 확장)를 따른다: ▕█░▏ 고정 14칸, 레벨 색은 테마와 무관한 truecolor 세 가지,
  * 빈 칸은 회색, 남은 비율 > 50 초록 · 20..50 주황 · < 20 빨강 + "running out".
  */
-const BAR_CELLS = 14;
+export const BAR_CELLS = 14;
 const LEVEL_GREEN = "38;2;74;222;128";
 const LEVEL_AMBER = "38;2;251;191;36";
-const LEVEL_RED = "38;2;248;113;113";
-const BAR_EMPTY = "38;2;82;82;91";
+export const LEVEL_RED = "38;2;248;113;113";
+export const BAR_EMPTY = "38;2;82;82;91";
 const LOW_PERCENT = 20;
 
 /** 동아시아 전각 문자는 터미널에서 2칸을 먹는다. 폭 계산이 틀리면 표가 깨진다. */
@@ -87,7 +87,7 @@ function pad(text: string, width: number): string {
 }
 
 /** 색을 입히되 폭은 항상 평문 기준으로 계산해 cols를 절대 넘지 않게 한다. */
-function compose(parts: readonly Part[], cols: number): string {
+export function compose(parts: readonly Part[], cols: number): string {
 	let out = "";
 	let width = 0;
 	for (const part of parts) {
@@ -106,7 +106,7 @@ function two(value: number): string {
 	return value.toString().padStart(2, "0");
 }
 
-function clock(date: Date): string {
+export function clock(date: Date): string {
 	return `${two(date.getHours())}:${two(date.getMinutes())}`;
 }
 
@@ -130,12 +130,17 @@ function relative(ms: number): string {
 	return restHours > 0 ? `in ${days}d ${restHours}h` : `in ${days}d`;
 }
 
-function formatReset(resetsAt: number | null, now: number): string {
-	if (resetsAt === null) return "";
+/** 리셋 시각: 오늘이면 "16:00", 아니면 "09/22 14:00". */
+export function resetStamp(resetsAt: number, now: number): string {
 	const date = new Date(resetsAt);
 	const today = new Date(now);
 	const sameDay = date.getFullYear() === today.getFullYear() && date.getMonth() === today.getMonth() && date.getDate() === today.getDate();
-	const stamp = sameDay ? clock(date) : `${two(date.getMonth() + 1)}/${two(date.getDate())} ${clock(date)}`;
+	return sameDay ? clock(date) : `${two(date.getMonth() + 1)}/${two(date.getDate())} ${clock(date)}`;
+}
+
+function formatReset(resetsAt: number | null, now: number): string {
+	if (resetsAt === null) return "";
+	const stamp = resetStamp(resetsAt, now);
 	const diff = resetsAt - now;
 	return diff <= 0 ? `reset ${stamp}` : `resets ${stamp} · ${relative(diff)}`;
 }
@@ -181,7 +186,7 @@ export function usageStamp(row: AccountRow, now: number): UsageStamp {
 	return { text: "", active: false };
 }
 
-function levelColor(remaining: number): string {
+export function levelColor(remaining: number): string {
 	if (remaining > 50) return LEVEL_GREEN;
 	if (remaining >= LOW_PERCENT) return LEVEL_AMBER;
 	return LEVEL_RED;

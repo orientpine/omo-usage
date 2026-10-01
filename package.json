@@ -15,7 +15,10 @@
   "bin": {
     "omo-usage": "./bin/omo-usage.ts"
   },
-  "files": ["bin", "src", "README.md", "README.ko.md"],
+  "files": ["bin", "src", "extension", "README.md", "README.ko.md"],
+  "pi": {
+    "extensions": ["./extension/index.js"]
+  },
   "engines": {
     "bun": ">=1.2"
   },
