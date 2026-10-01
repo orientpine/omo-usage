@@ -16,31 +16,31 @@ A terminal UI that shows the **remaining quota of every account** signed in to o
 <summary>Text version (the same demo data as the screenshot above)</summary>
 
 ```
-  omo-ai account usage                    accounts 7 · ok 5 · updated 14:00:00
-  ────────────────────────────────────────────────────────────────────────────
+  omo-ai account usage                                  accounts 7 · ok 5 · updated 14:00:00
+  ──────────────────────────────────────────────────────────────────────────────────────────
 
   anthropic-subscription
-  ▶ alice (pinned) 5h    ██████████████████░░  88% 16:00 · in 2h
-  │                7d    ████████████░░░░░░░░  61% 9/22 14:00 · in 3d
-  │                Fable ███████████████████░  96% 9/22 14:00 · in 3d
+  ▶ alice (pinned) 5h    ▕████████████░░▏  88% left · resets 16:00 · in 2h
+  │                7d    ▕█████████░░░░░▏  61% left · resets 09/22 14:00 · in 3d
+  │                Fable ▕█████████████░▏  96% left · resets 09/22 14:00 · in 3d
   │                in use · just now
 
-  ● bob            5h    ██████░░░░░░░░░░░░░░  32% 18:00 · in 4h
-  │                7d    ██████░░░░░░░░░░░░░░  31% 9/24 14:00 · in 5d
-  │                Fable ░░░░░░░░░░░░░░░░░░░░   0% 9/24 14:00 · in 5d
+  ● bob            5h    ▕████░░░░░░░░░░▏  32% left · resets 18:00 · in 4h
+  │                7d    ▕████░░░░░░░░░░▏  31% left · resets 09/24 14:00 · in 5d
+  │                Fable ▕░░░░░░░░░░░░░░▏   0% left · running out · resets 09/24 14:00 · in 5d
   │                last used 3h ago
 
   ● carol          expired · senpi refreshes it on next use · no re-login
   │                last used 14h ago
 
   chatgpt-subscription
-  ● ann (pro)      7d    ██████████████░░░░░░  71% 9/23 14:00 · in 4d
+  ● ann (pro)      7d    ▕██████████░░░░▏  71% left · resets 09/23 14:00 · in 4d
 
-  ● dana (team)    5h    ████████████████████ 100% 15:00 · in 1h
-  │                7d    █░░░░░░░░░░░░░░░░░░░   4% 9/25 14:00 · in 6d
+  ● dana (team)    5h    ▕██████████████▏ 100% left · resets 15:00 · in 1h
+  │                7d    ▕█░░░░░░░░░░░░░▏   4% left · running out · resets 09/25 14:00 · in 6d
 
   xai
-  ● default        7d    █████████████████░░░  87% 9/22 08:00 · in 2d 18h
+  ● default        7d    ▕████████████░░▏  87% left · resets 09/22 08:00 · in 2d 18h
   │                breakdown GrokBuild 12% · GrokImagine 1%
 
   google
@@ -90,9 +90,9 @@ It opens the two files senpi uses and writes not a single byte. Token refresh an
 
 - **One account = one block.** The first line carries the account name after `●` (Codex adds the plan, `(pro)`/`(team)`; a slot pinned by auth.json gets `(pinned)`), and the windows below it are tied together by `│`.
 - **The account being drained right now is `▶`.** If senpi completed a request on that account within the last 10 minutes, the marker turns into a green `▶` and the block ends with `in use · just now`. Anything older stays `●` with a dim `last used 3h ago`. senpi picks an account per session, so there can be more than one `▶`. senpi keeps no such record for Codex, xAI and kimi-coding, so the TUI compares the previous fetch against the current one and writes the drop as `in use · -3% since poll 2m ago` — different evidence, so different wording (it is not an exact timestamp but somewhere inside the 150-second fetch interval, and since Codex reports whole percents anything below 1 pp goes unnoticed). Once it goes stale: `last drain seen 25m ago`. `--once`/`--json` have no previous fetch, so they show none of this. google has no usage API at all.
-- **The bar and the percentage are what is left.** 100% means nothing used yet. Green ≥ 50% · yellow ≥ 20% · red < 20%.
+- **The bar and the percentage are what is left.** Each window reads `5h ▕████████████░░▏  88% left · …` — a fixed 14-cell bar, the same style as [asmond-lab/omo-usage](https://github.com/asmond-lab/omo-usage). 100% means nothing used yet. Green > 50% · amber 20–50% · red < 20%, and red adds `running out`.
 - **Window names**: `5h` session, `7d` weekly, and a model name such as `Fable` means that model's weekly limit.
-- **Reset times** read `16:00` when they fall today, otherwise `9/22 14:00`, followed by a relative time like `in 2h`.
+- **Reset times** read `resets 16:00` when they fall today, otherwise `resets 09/22 14:00`, followed by a relative time like `in 2h`. They stay on red lines too, so you can see when a drained window comes back.
 - **xAI** turns its single weekly credit pool into the bar, and the `breakdown GrokBuild 12% · GrokImagine 1%` line below it is each product's share of that same pool (usage, not remaining).
 - When a reason shows up instead of a bar:
 

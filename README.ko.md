@@ -16,31 +16,31 @@ omo-ai(senpi)에 로그인된 **모든 계정의 잔여 사용량**과 **지금 
 <summary>텍스트 버전 (위 화면과 같은 데모 데이터)</summary>
 
 ```
-  omo-ai account usage                    accounts 7 · ok 5 · updated 14:00:00
-  ────────────────────────────────────────────────────────────────────────────
+  omo-ai account usage                                  accounts 7 · ok 5 · updated 14:00:00
+  ──────────────────────────────────────────────────────────────────────────────────────────
 
   anthropic-subscription
-  ▶ alice (pinned) 5h    ██████████████████░░  88% 16:00 · in 2h
-  │                7d    ████████████░░░░░░░░  61% 9/22 14:00 · in 3d
-  │                Fable ███████████████████░  96% 9/22 14:00 · in 3d
+  ▶ alice (pinned) 5h    ▕████████████░░▏  88% left · resets 16:00 · in 2h
+  │                7d    ▕█████████░░░░░▏  61% left · resets 09/22 14:00 · in 3d
+  │                Fable ▕█████████████░▏  96% left · resets 09/22 14:00 · in 3d
   │                in use · just now
 
-  ● bob            5h    ██████░░░░░░░░░░░░░░  32% 18:00 · in 4h
-  │                7d    ██████░░░░░░░░░░░░░░  31% 9/24 14:00 · in 5d
-  │                Fable ░░░░░░░░░░░░░░░░░░░░   0% 9/24 14:00 · in 5d
+  ● bob            5h    ▕████░░░░░░░░░░▏  32% left · resets 18:00 · in 4h
+  │                7d    ▕████░░░░░░░░░░▏  31% left · resets 09/24 14:00 · in 5d
+  │                Fable ▕░░░░░░░░░░░░░░▏   0% left · running out · resets 09/24 14:00 · in 5d
   │                last used 3h ago
 
   ● carol          expired · senpi refreshes it on next use · no re-login
   │                last used 14h ago
 
   chatgpt-subscription
-  ● ann (pro)      7d    ██████████████░░░░░░  71% 9/23 14:00 · in 4d
+  ● ann (pro)      7d    ▕██████████░░░░▏  71% left · resets 09/23 14:00 · in 4d
 
-  ● dana (team)    5h    ████████████████████ 100% 15:00 · in 1h
-  │                7d    █░░░░░░░░░░░░░░░░░░░   4% 9/25 14:00 · in 6d
+  ● dana (team)    5h    ▕██████████████▏ 100% left · resets 15:00 · in 1h
+  │                7d    ▕█░░░░░░░░░░░░░▏   4% left · running out · resets 09/25 14:00 · in 6d
 
   xai
-  ● default        7d    █████████████████░░░  87% 9/22 08:00 · in 2d 18h
+  ● default        7d    ▕████████████░░▏  87% left · resets 09/22 08:00 · in 2d 18h
   │                breakdown GrokBuild 12% · GrokImagine 1%
 
   google
@@ -90,9 +90,9 @@ senpi가 쓰는 두 파일을 열어 볼 뿐 한 바이트도 쓰지 않는다. 
 
 - **한 계정 = 한 블록.** 첫 줄 `●` 뒤에 계정 이름(Codex는 `(pro)`/`(team)` 플랜, auth.json이 고정한 슬롯은 `(pinned)`), 이어지는 창은 `│`로 묶인다.
 - **지금 차감 중인 계정은 `▶`다.** senpi가 최근 10분 안에 그 계정으로 요청을 성공시켰으면 마커가 초록 `▶`가 되고 블록 끝에 `in use · just now`이 붙는다. 더 오래됐으면 `●` 그대로에 dim `last used 3h ago`. senpi는 세션마다 계정을 따로 고르므로 `▶`가 둘 이상일 수 있다. Codex·xAI·kimi-coding은 senpi가 이 기록을 남기지 않으므로 TUI가 직전 조회와 잔여를 비교해 줄어든 만큼을 `in use · -3% since poll 2m ago`로 적는다 — 근거가 다르니 문구도 다르다(정확한 시각이 아니라 150초 조회 주기 안 어딘가이고, Codex는 정수 %라 1%p 미만은 안 잡힌다). 오래되면 `last drain seen 25m ago`. `--once`/`--json`은 직전 조회가 없어 이 표시가 없다. google은 사용량 API 자체가 없다.
-- **막대와 %는 남은 양이다.** 100%가 아직 하나도 안 쓴 상태. 초록 ≥ 50% · 노랑 ≥ 20% · 빨강 < 20%.
+- **막대와 %는 남은 양이다.** 창마다 `5h ▕████████████░░▏  88% left · …`처럼 14칸 고정 막대로 그린다 — [asmond-lab/omo-usage](https://github.com/asmond-lab/omo-usage)와 같은 표시 방식. 100%가 아직 하나도 안 쓴 상태. 초록 > 50% · 주황 20–50% · 빨강 < 20%, 빨강이면 `running out`이 붙는다.
 - **창 이름**: `5h` 세션, `7d` 주간, `Fable`처럼 모델 이름이 붙으면 그 모델의 주간 한도.
-- **리셋 시각**은 오늘이면 `16:00`, 아니면 `9/22 14:00`, 그 뒤에 `in 2h` 같은 상대 시간.
+- **리셋 시각**은 오늘이면 `resets 16:00`, 아니면 `resets 09/22 14:00`, 그 뒤에 `in 2h` 같은 상대 시간. 빨강 줄에도 남겨 두어 바닥난 창이 언제 돌아오는지 보인다.
 - **xAI**는 주간 크레딧 풀 하나가 막대가 되고, 그 아래 `breakdown GrokBuild 12% · GrokImagine 1%`는 같은 풀에서 제품별로 쓴 몫이다(잔여가 아니라 사용).
 - 막대 대신 사유가 뜨는 경우:
 
