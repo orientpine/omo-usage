@@ -144,7 +144,7 @@ omo-usage --json | jq -r --argjson now "$(date +%s000)" '.[] | select(.lastUsedA
 
 ## Footer line in omo
 
-The same data also fits in **one line under omo's own footer**, so you can see it without leaving the session. The built-in footer stays exactly as it is; this line is added below it.
+The same data also fits in **one line inside omo**, so you can see it without leaving the session. It is an extension widget placed right below the input box (above omo's own footer); the built-in footer stays exactly as it is.
 
 ```sh
 omo install https://github.com/orientpine/omo-usage   # then start omo, or run /reload in an open session
@@ -164,7 +164,7 @@ Claude·orientpine ▕███████████░░░▏ 76% 7d · re
 - Each omo session runs its own fetch, so many sessions at once mean more usage calls (still at most one per account per 5 minutes per session).
 
 > [!NOTE]
-> senpi has no official API to *add* a footer line (`setStatus` shares one line among all extensions, `setFooter` replaces the whole footer), so like [asmond-lab/omo-usage](https://github.com/asmond-lab/omo-usage) this extends the built-in `FooterComponent`'s output. A future senpi release could change that component; if it is missing, the line falls back to the shared status line.
+> The line uses only senpi's official extension API, `ctx.ui.setWidget(key, [line], { placement: "belowEditor" })` - no patching of omo's internals (`setStatus` would share one line with every other extension, `setFooter` would replace the whole footer). If a host has no `setWidget` or it fails, the line simply does not appear.
 
 ## FAQ
 
@@ -240,7 +240,7 @@ src/
   footer.ts       omo footer line (① account · ② pool · ③ exceptions), 5-minute poller, senpi extension wiring
   types.ts        AccountRow, UsageWindow
 extension/
-  index.js        senpi extension entry (host-provided FooterComponent + truncateToWidth -> src/footer.ts)
+  index.js        senpi extension entry (official setWidget API only -> src/footer.ts)
 ```
 
 ## License

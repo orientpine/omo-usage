@@ -144,7 +144,7 @@ omo-usage --json | jq -r --argjson now "$(date +%s000)" '.[] | select(.lastUsedA
 
 ## omo footer 한 줄
 
-같은 정보를 **omo 자체 footer 아래 한 줄**로도 볼 수 있어서, 세션을 떠나지 않고 확인할 수 있다. 내장 footer는 그대로 두고 그 아래에 한 줄만 붙는다.
+같은 정보를 **omo 안의 한 줄**로도 볼 수 있어서, 세션을 떠나지 않고 확인할 수 있다. 입력창 바로 아래(omo 자체 footer 위)에 놓이는 확장 위젯이며, 내장 footer는 그대로 둔다.
 
 ```sh
 omo install https://github.com/orientpine/omo-usage   # 그다음 omo를 시작하거나, 열린 세션에서 /reload
@@ -164,7 +164,7 @@ Claude·orientpine ▕███████████░░░▏ 76% 7d · re
 - omo 세션마다 각자 조회하므로 세션이 많으면 호출도 그만큼 는다(세션당 계정마다 5분에 최대 한 번).
 
 > [!NOTE]
-> senpi에는 footer에 줄을 *덧붙이는* 공식 API가 없다(`setStatus`는 모든 확장이 한 줄을 나눠 쓰고, `setFooter`는 footer를 통째로 바꾼다). 그래서 [asmond-lab/omo-usage](https://github.com/asmond-lab/omo-usage)처럼 내장 `FooterComponent`의 출력 뒤에 한 줄을 붙인다. 이후 senpi가 그 컴포넌트를 바꿀 수 있고, 없으면 공유 상태줄로 대신 보인다.
+> 이 줄은 senpi 공식 확장 API `ctx.ui.setWidget(key, [줄], { placement: "belowEditor" })`만 쓰고 omo 내부를 고치지 않는다(`setStatus`는 다른 확장들과 한 줄을 나눠 쓰고, `setFooter`는 footer를 통째로 바꾼다). 호스트에 `setWidget`이 없거나 실패하면 줄이 그냥 나타나지 않는다.
 
 ## FAQ
 
@@ -240,7 +240,7 @@ src/
   footer.ts       omo footer 한 줄 (① 계정 · ② pool · ③ 예외), 5분 조회기, senpi 확장 연결
   types.ts        AccountRow, UsageWindow
 extension/
-  index.js        senpi 확장 진입점 (호스트의 FooterComponent + truncateToWidth → src/footer.ts)
+  index.js        senpi 확장 진입점 (공식 setWidget API만 사용 → src/footer.ts)
 ```
 
 ## 라이선스
