@@ -29,6 +29,16 @@ const BOLD_GREEN = "1;32";
 export const ACTIVE_WINDOW_MS = 10 * 60_000;
 const YELLOW = "33";
 const RED = "31";
+/**
+ * 막대 표시 방식은 asmond-lab/omo-usage(footer 확장)를 따른다: ▕█░▏ 고정 14칸, 레벨 색은 테마와 무관한 truecolor 세 가지,
+ * 빈 칸은 회색, 남은 비율 > 50 초록 · 20..50 주황 · < 20 빨강 + "running out".
+ */
+const BAR_CELLS = 14;
+const LEVEL_GREEN = "38;2;74;222;128";
+const LEVEL_AMBER = "38;2;251;191;36";
+const LEVEL_RED = "38;2;248;113;113";
+const BAR_EMPTY = "38;2;82;82;91";
+const LOW_PERCENT = 20;
 
 /** 동아시아 전각 문자는 터미널에서 2칸을 먹는다. 폭 계산이 틀리면 표가 깨진다. */
 function charWidth(code: number): number {
@@ -82,7 +92,9 @@ function compose(parts: readonly Part[], cols: number): string {
 	let width = 0;
 	for (const part of parts) {
 		if (width >= cols) break;
-		const text = truncate(part.t, cols - width);
+		const fitted = truncate(part.t, cols - width);
+		// 잘린 줄은 끝에 …를 달아 뒤에 내용이 더 있다는 것을 보여준다 (…는 1칸이라 cols를 넘지 않는다).
+		const text = fitted === part.t ? fitted : truncate(part.t, cols - width - 1) + "…";
 		if (text.length === 0) continue;
 		width += displayWidth(text);
 		out += part.c ? `\u001B[${part.c}m${text}${RESET}` : text;
@@ -123,9 +135,18 @@ function formatReset(resetsAt: number | null, now: number): string {
 	const date = new Date(resetsAt);
 	const today = new Date(now);
 	const sameDay = date.getFullYear() === today.getFullYear() && date.getMonth() === today.getMonth() && date.getDate() === today.getDate();
-	const stamp = sameDay ? clock(date) : `${date.getMonth() + 1}/${date.getDate()} ${clock(date)}`;
+	const stamp = sameDay ? clock(date) : `${two(date.getMonth() + 1)}/${two(date.getDate())} ${clock(date)}`;
 	const diff = resetsAt - now;
-	return diff <= 0 ? `${stamp} · reset` : `${stamp} · ${relative(diff)}`;
+	return diff <= 0 ? `reset ${stamp}` : `resets ${stamp} · ${relative(diff)}`;
+}
+
+/** 참조 디자인의 꼬리: "88% left · resets …". 20% 미만이면 running out을 붙이되, 언제 돌아오는지 알 수 있게 리셋 시각은 지우지 않는다. */
+function usageTail(window: UsageWindow, now: number): string {
+	const details: string[] = [];
+	if (window.remainingPercent < LOW_PERCENT) details.push("running out");
+	const reset = formatReset(window.resetsAt, now);
+	if (reset.length > 0) details.push(reset);
+	return ` ${window.remainingPercent.toString().padStart(3)}% left${details.length > 0 ? ` · ${details.join(" · ")}` : ""}`;
 }
 
 function elapsed(ms: number): string {
@@ -161,9 +182,9 @@ export function usageStamp(row: AccountRow, now: number): UsageStamp {
 }
 
 function levelColor(remaining: number): string {
-	if (remaining >= 50) return GREEN;
-	if (remaining >= 20) return YELLOW;
-	return RED;
+	if (remaining > 50) return LEVEL_GREEN;
+	if (remaining >= LOW_PERCENT) return LEVEL_AMBER;
+	return LEVEL_RED;
 }
 
 function bar(remaining: number, width: number): { filled: string; empty: string } {
@@ -213,7 +234,7 @@ export function renderFrame(state: AppState, cols: number): string[] {
 
 	const titleWidth = Math.min(24, Math.max(12, ...state.rows.map((r) => displayWidth(accountTitle(r)))));
 	const windowWidth = Math.min(10, Math.max(3, ...state.rows.flatMap((r) => r.windows.map((w) => displayWidth(w.label))), 3));
-	const barWidth = Math.max(6, Math.min(20, width - 4 - titleWidth - windowWidth - 30));
+	const barWidth = Math.max(6, Math.min(BAR_CELLS, width - 4 - titleWidth - windowWidth - 30));
 
 	let provider: string | null = null;
 	for (const row of state.rows) {
@@ -254,11 +275,11 @@ export function renderFrame(state: AppState, cols: number): string[] {
 					[
 						index === 0 ? marker : { t: GUIDE, c: DIM },
 						{ t: pad(index === 0 ? accountTitle(row) : "", titleWidth + 1), c: BOLD_WHITE },
-						{ t: pad(window.label, windowWidth + 1), c: DIM },
-						{ t: shape.filled, c: color },
-						{ t: shape.empty, c: DIM },
-						{ t: ` ${window.remainingPercent.toString().padStart(3)}% `, c: color },
-						{ t: formatReset(window.resetsAt, state.now), c: DIM },
+						{ t: pad(window.label, windowWidth + 1), c: color },
+						{ t: "▕" + shape.filled, c: color },
+						{ t: shape.empty, c: BAR_EMPTY },
+						{ t: "▏", c: color },
+						{ t: usageTail(window, state.now), c: color },
 						{ t: index === 0 ? staleNote(row) : "", c: YELLOW },
 					],
 					width,

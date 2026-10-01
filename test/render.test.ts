@@ -98,6 +98,31 @@ describe("renderFrame", () => {
 			60,
 		);
 		for (const line of lines) expect(displayWidth(strip(line))).toBeLessThanOrEqual(60);
+		// 잘린 줄은 …로 끝나 뒤에 내용이 더 있음을 알린다
+		expect(lines.map(strip).some((l) => l.endsWith("…"))).toBe(true);
+	});
+
+	test("막대는 ▕█░▏ 14칸이고, 50% 초과 초록 · 20..50 주황 · 20 미만 빨강 + running out (리셋 시각은 유지)", () => {
+		const lines = renderFrame(
+			state([
+				row({
+					windows: [
+						{ label: "5h", kind: "session", remainingPercent: 51, resetsAt: null },
+						{ label: "7d", kind: "weekly", remainingPercent: 50, resetsAt: null },
+						{ label: "Fable", kind: "scoped", remainingPercent: 19, resetsAt: NOW + 3_600_000 },
+					],
+				}),
+			]),
+			120,
+		);
+		const plain = lines.map(strip);
+		const first = plain.findIndex((l) => l.startsWith("  ● alice"));
+		expect(plain[first]).toMatch(/▕[█░]{14}▏  51% left$/);
+		expect(plain[first + 1]).toMatch(/▕[█░]{14}▏  50% left$/);
+		expect(plain[first + 2]).toMatch(/▕[█░]{14}▏  19% left · running out · resets (\d\d\/\d\d )?\d\d:\d\d · in 1h$/);
+		expect(lines[first]).toContain("\u001B[38;2;74;222;128m");
+		expect(lines[first + 1]).toContain("\u001B[38;2;251;191;36m");
+		expect(lines[first + 2]).toContain("\u001B[38;2;248;113;113m");
 	});
 
 	test("note가 있는 계정은 막대 아래 │ 가이드 줄에 내역을 dim으로 붙인다", () => {
