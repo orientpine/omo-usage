@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import type { AccountRow, UsageWindow } from "./types.ts";
-import { collectUsage } from "./collect.ts";
+import { collectShared } from "./cache.ts";
 import { readAuthFile } from "./credentials.ts";
 import { readPoolState } from "./pool.ts";
-import { BAR_CELLS, BAR_EMPTY, LEVEL_RED, clock, compose, displayWidth, levelColor, resetStamp, type Part } from "./render.ts";
+import { BAR_CELLS, BAR_EMPTY, LEVEL_RED, compose, displayWidth, levelColor, resetStamp, type Part } from "./render.ts";
 
-/** 소유자가 정한 조회 간격 (2026-10-01): Anthropic usage의 토큰당 429 창(약 95초)과 대시보드 TUI(150초)에 겹쳐도 429를 피할 만큼 넉넉하게. */
+/** 공유 캐시를 다시 읽는 주기 (2026-10-01). 실제 조회는 머신 전체에서 계정당 간격(기본 10분)마다 한 번만 한다 (cache.ts, 2026-10-08). */
 export const FOOTER_REFRESH_MS = 300_000;
 const WIDGET_KEY = "omo-usage";
 /**
@@ -75,9 +75,7 @@ function headParts(row: AccountRow, name: string, cells: number, withReset: bool
 		{ t: `▏ ${window.remainingPercent}% ${window.label}`, c: color },
 	];
 	if (!withReset) return parts;
-	// 429로 이전 값을 붙들고 있으면 리셋보다 "언제 다시 묻는지"가 중요하다.
-	if (row.retryAt !== undefined) parts.push({ t: ` · retry ${clock(new Date(row.retryAt))}`, c: YELLOW });
-	else if (window.resetsAt !== null) parts.push({ t: ` · resets ${resetStamp(window.resetsAt, now)}`, c: color });
+	if (window.resetsAt !== null) parts.push({ t: ` · resets ${resetStamp(window.resetsAt, now)}`, c: color });
 	return parts;
 }
 
@@ -128,6 +126,9 @@ export interface PollerDeps {
 	readonly readAuth?: () => Promise<unknown>;
 	readonly readPool?: () => Promise<unknown>;
 	readonly fetchImpl?: typeof fetch;
+	/** 공유 캐시 파일과 계정당 조회 간격. 기본은 cache.ts의 cachePath()·refreshIntervalMs(). */
+	readonly cachePath?: string;
+	readonly intervalMs?: number;
 	readonly now?: () => number;
 	readonly setTimer?: (fn: () => void, ms: number) => unknown;
 	readonly clearTimer?: (handle: unknown) => void;
@@ -150,8 +151,8 @@ function realTimer(fn: () => void, ms: number): unknown {
 }
 
 /**
- * FOOTER_REFRESH_MS마다 모든 계정을 다시 조회한다. 직전 결과를 previous로 넘기므로 collectUsage가
- * retryAt 전인 계정은 부르지 않고, 429면 이전 막대를 지운 대신 retryAt만 덧붙인다.
+ * FOOTER_REFRESH_MS마다 공유 캐시를 거쳐 사용량을 읽는다. 오래된 계정만 잠금을 쥐어 조회하고, retryAt 전인 계정은
+ * 어느 프로세스도 부르지 않으며, 429면 이전 막대를 지우지 않고 retryAt만 덧붙인다.
  */
 export function createUsagePoller(onRows: (rows: readonly AccountRow[]) => void, deps: PollerDeps = {}): UsagePoller {
 	const readAuth = deps.readAuth ?? (() => readAuthFile());
@@ -169,7 +170,13 @@ export function createUsagePoller(onRows: (rows: readonly AccountRow[]) => void,
 		inflight = (async () => {
 			try {
 				const [auth, poolState] = await Promise.all([readAuth(), readPool()]);
-				rows = await collectUsage(auth, { previous: rows, now: now(), poolState, fetchImpl: deps.fetchImpl });
+				rows = await collectShared(auth, {
+					now: now(),
+					poolState,
+					...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
+					...(deps.cachePath ? { cachePath: deps.cachePath } : {}),
+					...(deps.intervalMs ? { intervalMs: deps.intervalMs } : {}),
+				});
 				if (running) onRows(rows);
 			} catch (error) {
 				deps.onError?.(error instanceof Error ? error.message : String(error));

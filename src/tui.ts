@@ -1,5 +1,5 @@
 import type { AccountRow } from "./types.ts";
-import { collectUsage } from "./collect.ts";
+import { collectShared } from "./cache.ts";
 import { readAuthFile } from "./credentials.ts";
 import { readPoolState, stampLastUsed } from "./pool.ts";
 import { renderFrame, type AppState } from "./render.ts";
@@ -12,7 +12,7 @@ const HOME = "\u001B[H";
 const CLEAR_LINE = "\u001B[K";
 const CLEAR_BELOW = "\u001B[J";
 
-/** Anthropic usage 엔드포인트의 토큰당 쿨다운(약 95초)보다 길어야 자동 갱신마다 429를 맞지 않는다. */
+/** 공유 캐시를 다시 읽는 주기. 실제 조회는 계정 항목이 간격(기본 10분)보다 오래됐을 때만 일어난다 (cache.ts). */
 const AUTO_REFRESH_MS = 150_000;
 const TICK_MS = 1_000;
 /** 어느 계정이 차감 중인지는 로컬 파일 하나로 알 수 있으니, 사용량 조회와 따로 짧게 돌린다. */
@@ -42,7 +42,7 @@ export async function runTui(): Promise<void> {
 	// 파이프로 넘길 때는 TUI 대신 한 번만 출력한다.
 	if (!process.stdout.isTTY) {
 		const [auth, poolState] = await Promise.all([readAuthFile(), readPoolState()]);
-		state.rows = await collectUsage(auth, { poolState });
+		state.rows = await collectShared(auth, { poolState });
 		for (const line of renderFrame({ ...snapshot(state), updatedAt: Date.now() }, process.stdout.columns ?? 100)) console.log(line);
 		return;
 	}
@@ -60,7 +60,8 @@ export async function runTui(): Promise<void> {
 		retryTimer = setTimeout(() => void refresh(), Math.min(...pending) - now + 1_000);
 	};
 
-	const refresh = async (): Promise<void> => {
+	/** force = [r]: 간격은 무시하지만 쿨다운과 retryAt은 지킨다. */
+	const refresh = async (force = false): Promise<void> => {
 		if (state.refreshing) return;
 		inflight?.abort();
 		const controller = new AbortController();
@@ -69,7 +70,7 @@ export async function runTui(): Promise<void> {
 		draw(state);
 		try {
 			const [auth, poolState] = await Promise.all([readAuthFile(), readPoolState()]);
-			const rows = await collectUsage(auth, { signal: controller.signal, previous: state.rows, poolState });
+			const rows = await collectShared(auth, { signal: controller.signal, poolState, force });
 			if (controller.signal.aborted || closed) return;
 			state.rows = rows;
 			state.updatedAt = Date.now();
@@ -115,7 +116,7 @@ export async function runTui(): Promise<void> {
 	function onKey(chunk: Buffer): void {
 		const key = chunk.toString("utf8");
 		if (key === "q" || key === "Q" || key === "\u0003" || key === "\u0004") quit(0);
-		else if (key === "r" || key === "R") void refresh();
+		else if (key === "r" || key === "R") void refresh(true);
 	}
 
 	process.stdout.write(ALT_SCREEN_ON + CURSOR_HIDE);

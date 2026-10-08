@@ -50,14 +50,15 @@ describe("collectUsage · 429 처리", () => {
 		expect(find(rows, "default").status).toBe("ok");
 	});
 
-	test("이전 값이 있으면 429여도 막대를 유지하고 사유만 덧붙인다", async () => {
+	test("이전 값이 있으면 429여도 막대와 마지막 성공 시각을 그대로 두고 재시도 시각만 붙인다 (오류 문구 없음)", async () => {
 		const first = await collectUsage(AUTH, { fetchImpl: fakeFetch({}).fetchImpl, now: NOW });
 		const { fetchImpl } = fakeFetch({ "tok-bob": 429 });
 		const rows = await collectUsage(AUTH, { fetchImpl, now: NOW + 60_000, previous: first });
 		const bob = find(rows, "bob");
 		expect(bob.status).toBe("ok");
 		expect(bob.windows).toEqual(find(first, "bob").windows);
-		expect(bob.detail).toContain("rate limited");
+		expect(bob.detail).toBeNull();
+		expect(bob.fetchedAt).toBe(NOW);
 		expect(bob.retryAt).toBe(NOW + 60_000 + RATE_LIMIT_COOLDOWN_MS);
 	});
 
@@ -107,7 +108,7 @@ describe("collectUsage · pool state", () => {
 			poolState: POOL,
 		});
 		const kept = find(rows, "default");
-		expect(kept.detail).toContain("rate limited");
+		expect(kept.retryAt).toBe(NOW + 60_000 + RATE_LIMIT_COOLDOWN_MS);
 		expect(kept.lastUsedAt).toBe(NOW - 30_000);
 	});
 

@@ -26,6 +26,8 @@ export interface AccountRow {
 	/** 액세스 토큰 만료 시각 epoch ms */
 	readonly expiresAt: number | null;
 	readonly windows: readonly UsageWindow[];
+	/** 이 계정의 사용량을 마지막으로 성공해 받아 온 시각 (epoch ms). 화면의 "updated HH:MM" */
+	readonly fetchedAt?: number;
 	/** 429를 받은 계정은 이 시각(epoch ms)까지 다시 조회하지 않는다 */
 	readonly retryAt?: number;
 	/** 막대 아래 가이드 줄에 dim으로 붙는 보조 정보 (xai 제품별 사용 내역 등) */

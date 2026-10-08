@@ -74,7 +74,9 @@ omo-usage
 ~/.omo/agent/credential-pool-state.json ─ 읽기만 ─▶ 슬롯별 lastSuccessAt ─▶ ▶ 사용 중 · 마지막 사용
 ```
 
-senpi가 쓰는 두 파일을 열어 볼 뿐 한 바이트도 쓰지 않는다. 토큰 갱신과 계정 선택은 전부 senpi 몫이라 omo-usage를 켜 둔다고 senpi 동작이 바뀌지 않는다. 사용량은 150초마다 다시 조회하고(Anthropic의 429 쿨다운보다 길게), 차감 중 표시는 로컬 파일 하나라 5초마다 다시 읽는다.
+senpi가 쓰는 두 파일을 열어 볼 뿐 그 파일들에는 한 바이트도 쓰지 않는다. 토큰 갱신과 계정 선택은 전부 senpi 몫이라 omo-usage를 켜 둔다고 senpi 동작이 바뀌지 않는다. 차감 중 표시는 로컬 파일 하나라 5초마다 다시 읽는다.
+
+**조회는 머신 전체에서 계정당 한 번.** 모든 omo-usage 프로세스(omo 세션마다 뜨는 footer 줄, TUI, `--once`, `--json`)가 캐시 파일 하나 `~/.cache/omo-usage/usage.json`(권한 0600, 토큰 없음. `$XDG_CACHE_HOME`·`OMO_USAGE_CACHE_DIR`로 옮길 수 있다)을 함께 쓴다. 실제 조회는 그 계정 항목이 **10분**(`OMO_USAGE_REFRESH_SECONDS`, 429 쿨다운 120초보다 짧게는 못 잡는다)보다 오래됐을 때만 하고, 잠금 파일로 한 번에 한 프로세스만 조회하며 나머지는 기다렸다가 그 결과를 읽는다(주인이 죽었거나 45초보다 오래된 잠금은 푼다). 429 뒤에는 재시도 시각 전까지 어느 프로세스도 그 계정을 부르지 않는다. 그래서 사용량은 실시간이 아니고, 계정마다 마지막으로 성공한 조회 시각 `updated HH:MM`을 보인다.
 
 ## 사용법
 
@@ -100,7 +102,7 @@ senpi가 쓰는 두 파일을 열어 볼 뿐 한 바이트도 쓰지 않는다. 
 | --- | --- |
 | `expired · senpi refreshes it on next use · no re-login` | 액세스 토큰만 만료. senpi가 그 계정을 쓰는 순간 refresh token으로 갱신한다 |
 | `expired · refresh failed · run /login <provider> in omo (name: <slot>)` | refresh token까지 죽은 경우. omo TUI에서 `/login`으로 재인증 |
-| `rate limited (HTTP 429) · retry HH:MM` | 직전 막대를 그대로 두고, 그 시각 전에는 다시 부르지 않는다 |
+| `rate limited (HTTP 429) · retry HH:MM` | 아직 이전 값이 없을 때만 뜬다. 이전 값이 있으면 막대와 `updated HH:MM`을 그대로 두고, 재시도 시각 전에는 어느 프로세스도 다시 부르지 않는다 |
 | `error · …` | HTTP 오류·시간 초과·해석 불가 응답. 숫자를 지어내지 않는다 |
 | `n/a · …` | 사용량 API가 없는 provider(google) |
 
@@ -132,7 +134,7 @@ senpi가 쓰는 두 파일을 열어 볼 뿐 한 바이트도 쓰지 않는다. 
 - `status`: `ok` · `expired` · `error` · `unsupported`. `detail`은 사유 문자열(없으면 `null`).
 - `windows[].kind`: `session`(5h) · `weekly`(7d) · `scoped`(모델별) · `other`. 시각은 전부 epoch ms.
 - `lastUsedAt`: senpi가 그 계정으로 마지막으로 성공한 요청 시각(epoch ms, `~/.omo/agent/credential-pool-state.json`의 `lastSuccessAt`). 기록이 없는 provider(Codex·xAI·kimi-coding·google)에는 키 자체가 없다. `pinned: true`는 auth.json이 그 슬롯을 고정한 경우에만 붙는다. Codex·xAI·kimi-coding의 잔여 감소 감지(`drained`)는 직전 조회가 있어야 생기므로 TUI에서만 붙고 `--json`에는 나오지 않는다.
-- 429로 이전 값을 유지 중이면 `retryAt`, xAI 제품별 내역은 `note`가 추가로 붙는다.
+- `fetchedAt`: 그 계정 사용량을 마지막으로 성공해 받은 시각(epoch ms). 429로 이전 값을 유지 중이면 `retryAt`, xAI 제품별 내역은 `note`가 추가로 붙는다.
 
 ```sh
 # 예: 계정별 7d 잔여만
@@ -160,8 +162,7 @@ Claude·orientpine ▕███████████░░░▏ 76% 7d · re
 - **③ 예외**: 다른 provider는 평소엔 숨기고, 빨강(20% 미만)이거나 재로그인이 필요할 때만 첫 하나를 보이며 나머지는 `+N`.
 - **좁은 터미널**에서는 ③ → ② → 리셋 시각 → 막대 길이 순으로 덜어내고, 마지막엔 `…`로 자른다. 줄이 넘어가지 않는다.
 - **"이 세션의 계정"은 어떻게 아나?** omo 자체 footer가 `(provider@slot)`으로 보여주는 바로 그 계정이다. senpi에는 그것을 돌려주는 API가 없어서 senpi와 같은 규칙으로 다시 계산한다: 고정 슬롯이 있으면 그것, 없으면 세션 id로 매긴 rendezvous 해시 1위(senpi가 세션마다 계정을 고를 때 쓰는 그 해시). 슬롯 이름과 세션 id만 쓰고 토큰은 쓰지 않는다. 세션 id를 못 얻으면 단정하지 않는다: ①은 provider 이름만, ②에 모든 계정을 보인다.
-- **갱신**: 사용량은 **5분**마다 조회한다(Anthropic의 약 95초 429 창보다 넉넉히 길게). 429가 오면 이전 값을 유지하고, 그동안은 리셋 시각 대신 `retry HH:MM`을 보인다. 모델을 바꾸거나(`/model`, Ctrl+P) 답이 끝날 때는 계정만 다시 맞추고 조회는 하지 않는다.
-- omo 세션마다 각자 조회하므로 세션이 많으면 호출도 그만큼 는다(세션당 계정마다 5분에 최대 한 번).
+- **갱신**: 줄은 **5분**마다 공유 캐시를 다시 읽고, 실제 사용량 조회는 omo 세션이 몇 개든 머신 전체에서 계정당 10분에 최대 한 번이다. 429가 오면 이전 값을 그대로 유지한다. 모델을 바꾸거나(`/model`, Ctrl+P) 답이 끝날 때는 계정만 다시 맞추고 조회는 하지 않는다.
 
 > [!NOTE]
 > 이 줄은 senpi 공식 확장 API `ctx.ui.setWidget(key, [줄], { placement: "belowEditor" })`만 쓰고 omo 내부를 고치지 않는다(`setStatus`는 다른 확장들과 한 줄을 나눠 쓰고, `setFooter`는 footer를 통째로 바꾼다). 호스트에 `setWidget`이 없거나 실패하면 줄이 그냥 나타나지 않는다.
@@ -178,7 +179,7 @@ Claude·orientpine ▕███████████░░░▏ 76% 7d · re
 없다. `omo auth`에는 `check` / `print-api-key` / `print-bearer-token`뿐이다. 로그인은 TUI 안의 `/login <provider>` 또는 `/claude-account add`다.
 
 **계정마다 `rate limited (HTTP 429)`가 자주 뜬다.**
-Anthropic usage 엔드포인트는 토큰당 마지막 성공 뒤 약 95초 동안 429를 돌려준다. senpi 자체 폴링과 겹치면 더 잦다. omo-usage는 429를 받으면 직전 막대를 유지하고 재시도 시각 전에는 그 계정을 다시 부르지 않으며, 자동 갱신 주기(150초)도 이 쿨다운보다 길게 잡았다. 값이 사라지는 게 아니라 잠시 안 바뀌는 것뿐이다.
+Anthropic usage 엔드포인트는 토큰당 마지막 성공 뒤 약 95초 동안 429를 돌려준다. 예전 버전은 omo 세션마다 따로 조회해서, 세션이 여럿이면 공유 계정이 늘 이 창에 걸렸다. 이제는 모든 프로세스가 캐시 하나를 같이 쓰고 계정당 10분에 한 번만 조회하며, 429가 와도 직전 막대(와 `updated HH:MM`)를 그대로 둔다. 업데이트 전에 뜨어 있던 세션은 재시작할 때까지 예전 코드로 조회한다.
 
 **xAI 제품별 내역은 왜 막대가 아닌가?**
 `GrokBuild 12% · GrokImagine 1%`는 각 제품의 한도가 아니라 같은 주간 풀에서 쓴 몫이라, 잔여 막대로 그리면 뜻이 틀린다. 막대는 풀 전체(`creditUsagePercent`) 하나만 둔다.
@@ -202,7 +203,7 @@ auth.json은 읽기 전용으로 열고, 토큰은 fetch 호출에만 쓴다. �
 - **auth.json에 쓰지 않는다.** 토큰 갱신은 senpi 몫이다.
 - **만료 ≠ 죽음.** 재로그인 안내는 senpi failover가 `blockReason: "auth_error"`로 찍은 슬롯에만 붙인다.
 - **"현재 계정" 하나를 단정하지 않는다.** senpi의 계정 선택은 세션별이라, 슬롯마다 마지막 차감 시각을 그대로 보여주고 최근(10분)이면 `▶`로 부른다. 근거가 다르면 문구도 다르다(`just now` vs `-3% since poll`).
-- **429에 막대를 지우지 않는다.** 직전 값 유지 + 재시도 시각 표시 + 그 전엔 호출 안 함.
+- **429에 막대를 지우지 않는다.** 직전 값과 그 갱신 시각 유지 + 재시도 시각 전에는 어느 프로세스도 호출 안 함.
 - **한 줄도 터미널 폭을 넘지 않는다.** 한글·전각 폭을 직접 계산해 색을 입혀도 열이 흔들리지 않는다.
 
 <details>
@@ -230,14 +231,15 @@ bun run src/main.ts   # 로컬 실행 (= bin/omo-usage.ts)
 ```
 src/
   main.ts         CLI 진입: --once / --json / --help, 아니면 TUI
-  tui.ts          대체 화면, 키 입력, 150초 자동 갱신, 5초 pool-state 갱신, 429 재시도 예약
+  tui.ts          대체 화면, 키 입력, 150초 캐시 재읽기([r]은 강제 조회), 5초 pool-state 갱신, 429 재시도 예약
+  cache.ts        머신 공유 캐시 파일 + 잠금: 오래된 계정만, 한 번, 한 프로세스에서 조회
   collect.ts      provider별 fetch, 429 쿨다운, 직전 조회 대비 잔여 감소 감지
   parse.ts        응답 → UsageWindow (Claude / Codex / xAI / Kimi)
   auth.ts         auth.json → 계정 로스터, 만료 판정과 사유, 고정 슬롯
   pool.ts         credential-pool-state.json → 슬롯별 마지막 차감 시각 (▶ 사용 중)
   credentials.ts  토큰 맵 (화면 상태와 분리)
   render.ts       프레임 렌더: 폭 계산, 색, ● / ▶ / │ 가이드
-  footer.ts       omo footer 한 줄 (① 계정 · ② pool · ③ 예외), 5분 조회기, senpi 확장 연결
+  footer.ts       omo footer 한 줄 (① 계정 · ② pool · ③ 예외), 5분 캐시 조회기, senpi 확장 연결
   types.ts        AccountRow, UsageWindow
 extension/
   index.js        senpi 확장 진입점 (공식 setWidget API만 사용 → src/footer.ts)

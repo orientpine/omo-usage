@@ -160,22 +160,26 @@ describe("renderFrame", () => {
 		expect(text).not.toContain("%");
 	});
 
-	test("429로 이전 값을 유지한 계정은 막대 옆에 사유와 재시도 시각을 보여준다", () => {
+	test("429로 이전 값을 유지한 계정은 오류 없이 이전 막대와 마지막 갱신 시각만, 이전 값이 없을 때만 사유를 보인다", () => {
 		const retryAt = NOW + 120_000;
+		const fetchedAt = NOW - 7 * 60_000;
 		const lines = renderFrame(
 			state([
-				row({ detail: "rate limited (HTTP 429)", retryAt }),
+				row({ retryAt, fetchedAt }),
 				row({ slot: "bob", label: "bob", status: "error", detail: "rate limited (HTTP 429)", retryAt, windows: [] }),
 			]),
 			120,
 		).map(strip);
-		const kept = lines.find((l) => l.includes("alice")) ?? "";
+		const hm = (ms: number) => `${String(new Date(ms).getHours()).padStart(2, "0")}:${String(new Date(ms).getMinutes()).padStart(2, "0")}`;
+		const aliceAt = lines.findIndex((l) => l.includes("alice"));
+		const aliceBlock = lines.slice(aliceAt, lines.findIndex((l) => l.includes("bob"))).join("\n");
 		const bare = lines.find((l) => l.includes("bob")) ?? "";
-		const clock = new Date(retryAt);
-		const stamp = `${String(clock.getHours()).padStart(2, "0")}:${String(clock.getMinutes()).padStart(2, "0")}`;
-		expect(kept).toContain("50%");
-		expect(kept).toContain(`rate limited (HTTP 429) · retry ${stamp}`);
-		expect(bare).toContain(`error · rate limited (HTTP 429) · retry ${stamp}`);
+		expect(lines[aliceAt]).toContain("50% left");
+		expect(aliceBlock).toContain(`updated ${hm(fetchedAt)}`);
+		expect(aliceBlock).not.toContain("error");
+		expect(aliceBlock).not.toContain("rate limited");
+		expect(aliceBlock).not.toContain("retry");
+		expect(bare).toContain(`error · rate limited (HTTP 429) · retry ${hm(retryAt)}`);
 	});
 
 	test("최근 차감된 계정은 ▶ 마커와 '사용 중'을, 나머지는 '마지막 사용'을 단다", () => {
