@@ -74,7 +74,9 @@ Updating is the same command again. To remove it: `bun remove -g @orientpine/omo
 ~/.omo/agent/credential-pool-state.json ─ read only ─▶ lastSuccessAt per slot ─▶ ▶ in use · last used
 ```
 
-It opens the two files senpi uses and writes not a single byte. Token refresh and account selection are entirely senpi's job, so leaving omo-usage running changes nothing about how senpi behaves. Usage is re-fetched every 150 seconds (longer than Anthropic's 429 cooldown), and the in-use marker comes from one local file, so that is re-read every 5 seconds.
+It opens the two files senpi uses and writes not a single byte to them. Token refresh and account selection are entirely senpi's job, so leaving omo-usage running changes nothing about how senpi behaves. The in-use marker comes from one local file, so that is re-read every 5 seconds.
+
+**One fetch per account for the whole machine.** Every omo-usage process (each omo session's footer line, the TUI, `--once`, `--json`) shares one cache file, `~/.cache/omo-usage/usage.json` (mode 0600, no tokens; `$XDG_CACHE_HOME` and `OMO_USAGE_CACHE_DIR` move it). An account is really fetched only when its entry is older than **10 minutes** (`OMO_USAGE_REFRESH_SECONDS`, never below the 120-second 429 cooldown), and a lock file makes sure only one process fetches at a time while the others wait and read its result (a lock whose owner died or that is older than 45 s is released). After a 429 no process calls that account before its retry time. Usage is therefore not real-time: each account shows `updated HH:MM`, the time of its last successful fetch.
 
 ## Usage
 
@@ -100,7 +102,7 @@ It opens the two files senpi uses and writes not a single byte. Token refresh an
 | --- | --- |
 | `expired · senpi refreshes it on next use · no re-login` | Only the access token expired. senpi refreshes it with the refresh token the moment it uses that account |
 | `expired · refresh failed · run /login <provider> in omo (name: <slot>)` | The refresh token is dead too. Re-authenticate with `/login` in the omo TUI |
-| `rate limited (HTTP 429) · retry HH:MM` | The previous bar is kept as is, and the account is not called again before that time |
+| `rate limited (HTTP 429) · retry HH:MM` | Only when there is no previous value yet. With a previous value the bar stays as is with its `updated HH:MM`, and no process calls the account again before the retry time |
 | `error · …` | HTTP error, timeout, or a response that cannot be parsed. No numbers are invented |
 | `n/a · …` | A provider with no usage API (google) |
 
@@ -132,7 +134,7 @@ It opens the two files senpi uses and writes not a single byte. Token refresh an
 - `status`: `ok` · `expired` · `error` · `unsupported`. `detail` is the reason string (`null` when there is none).
 - `windows[].kind`: `session` (5h) · `weekly` (7d) · `scoped` (per model) · `other`. All times are epoch ms.
 - `lastUsedAt`: when senpi last succeeded with that account (epoch ms, `lastSuccessAt` from `~/.omo/agent/credential-pool-state.json`). Providers that keep no such record (Codex, xAI, kimi-coding, google) do not carry the key at all. `pinned: true` appears only when auth.json pinned that slot. The drop detection for Codex, xAI and kimi-coding (`drained`) needs a previous fetch, so it exists in the TUI only and never in `--json`.
-- While a 429 keeps the previous values, `retryAt` is added; the xAI per-product breakdown adds `note`.
+- `fetchedAt`: when that account's usage was last fetched successfully (epoch ms). While a 429 keeps the previous values, `retryAt` is added; the xAI per-product breakdown adds `note`.
 
 ```sh
 # example: just the 7d remaining per account
@@ -160,8 +162,7 @@ Claude·orientpine ▕███████████░░░▏ 76% 7d · re
 - **③ exceptions**: other providers stay hidden unless one is red (< 20%) or needs a re-login; then the first one shows, the rest as `+N`.
 - **Narrow terminals** drop ③, then ②, then the reset time, then shorten the bar, and finally cut with `…`. The line never wraps.
 - **Which account is "this session's"?** The same one omo's own footer names as `(provider@slot)`. senpi has no API that returns it, so the line recomputes it with senpi's own rule: the pinned slot if there is one, otherwise the slot that wins the session-id rendezvous hash (the hash senpi uses to pick an account per session). Only slot names and the session id are used, never a token. If the session id is unavailable it does not guess: ① shows just the provider and ② lists every account.
-- **Refresh**: usage is fetched every **5 minutes**, well clear of Anthropic's ~95-second 429 window. A 429 keeps the previous values and the line shows `retry HH:MM` instead of the reset time until then. Switching models (`/model`, Ctrl+P) or the end of a reply only re-matches the account; it does not fetch.
-- Each omo session runs its own fetch, so many sessions at once mean more usage calls (still at most one per account per 5 minutes per session).
+- **Refresh**: the line re-reads the shared cache every **5 minutes**; the actual usage call happens at most once per account per 10 minutes for the whole machine, however many omo sessions are open. A 429 keeps the previous values unchanged. Switching models (`/model`, Ctrl+P) or the end of a reply only re-matches the account; it does not fetch.
 
 > [!NOTE]
 > The line uses only senpi's official extension API, `ctx.ui.setWidget(key, [line], { placement: "belowEditor" })` - no patching of omo's internals (`setStatus` would share one line with every other extension, `setFooter` would replace the whole footer). If a host has no `setWidget` or it fails, the line simply does not appear.
@@ -178,7 +179,7 @@ Usually not. An expired access token is normal, and as long as the refresh token
 There is not. `omo auth` only has `check` / `print-api-key` / `print-bearer-token`. Logging in is `/login <provider>` or `/claude-account add` inside the TUI.
 
 **`rate limited (HTTP 429)` keeps showing up on my accounts.**
-The Anthropic usage endpoint returns 429 for roughly 95 seconds after the last success per token, and it gets more frequent when it collides with senpi's own polling. On a 429 omo-usage keeps the previous bar and does not call that account again before the retry time, and the auto-refresh interval (150 s) is deliberately longer than that cooldown. The value is not gone — it just does not move for a while.
+The Anthropic usage endpoint returns 429 for roughly 95 seconds after the last success per token. Older versions fetched once per omo session, so a dozen sessions kept every shared account in that window. Now all processes share one cache and one fetch per account per 10 minutes, and a 429 only keeps the previous bar (with its `updated HH:MM`). Sessions started before the update still run the old code until they are restarted.
 
 **Why is the xAI per-product breakdown not a bar?**
 `GrokBuild 12% · GrokImagine 1%` are not each product's own limit but their shares of the same weekly pool, so drawing them as remaining bars would say something false. The only bar is the pool as a whole (`creditUsagePercent`).
@@ -202,7 +203,7 @@ auth.json is opened read-only and tokens are used in the fetch call and nowhere 
 - **Never write to auth.json.** Refreshing tokens is senpi's job.
 - **Expired ≠ dead.** The re-login hint is attached only to slots that senpi's failover stamped with `blockReason: "auth_error"`.
 - **Never declare a single "current account".** senpi chooses per session, so every slot shows its own last-drain time and earns a `▶` when that is recent (10 minutes). Different evidence, different wording (`just now` vs `-3% since poll`).
-- **A 429 never erases a bar.** Keep the previous value, show the retry time, and do not call before it.
+- **A 429 never erases a bar.** Keep the previous value with its update time, and no process calls before the retry time.
 - **No line ever exceeds the terminal width.** Hangul and full-width glyph widths are measured by hand, so columns hold even with color applied.
 
 <details>
@@ -230,14 +231,15 @@ bun run src/main.ts   # run locally (= bin/omo-usage.ts)
 ```
 src/
   main.ts         CLI entry: --once / --json / --help, otherwise the TUI
-  tui.ts          alternate screen, key input, 150 s auto refresh, 5 s pool-state refresh, 429 retry scheduling
+  tui.ts          alternate screen, key input, 150 s cache re-read ([r] forces a fetch), 5 s pool-state refresh, 429 retry scheduling
+  cache.ts        machine-wide cache file + lock: fetch only stale accounts, once, in one process
   collect.ts      per-provider fetch, 429 cooldown, drop detection against the previous fetch
   parse.ts        response -> UsageWindow (Claude / Codex / xAI / Kimi)
   auth.ts         auth.json -> account roster, expiry verdict and reason, pinned slots
   pool.ts         credential-pool-state.json -> last drain time per slot (the in-use marker)
   credentials.ts  token map (kept apart from the screen state)
   render.ts       frame rendering: width math, color, the ● / ▶ / │ guides
-  footer.ts       omo footer line (① account · ② pool · ③ exceptions), 5-minute poller, senpi extension wiring
+  footer.ts       omo footer line (① account · ② pool · ③ exceptions), 5-minute cache poller, senpi extension wiring
   types.ts        AccountRow, UsageWindow
 extension/
   index.js        senpi extension entry (official setWidget API only -> src/footer.ts)
