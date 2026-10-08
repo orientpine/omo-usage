@@ -138,6 +138,11 @@ export function resetStamp(resetsAt: number, now: number): string {
 	return sameDay ? clock(date) : `${two(date.getMonth() + 1)}/${two(date.getDate())} ${clock(date)}`;
 }
 
+/** 계정별 마지막 성공 조회 시각. 공유 캐시라 실시간이 아니고, 429 동안에는 이 시각의 막대가 그대로 남는다. */
+export function updatedStamp(fetchedAt: number, now: number): string {
+	return `updated ${resetStamp(fetchedAt, now)}`;
+}
+
 function formatReset(resetsAt: number | null, now: number): string {
 	if (resetsAt === null) return "";
 	const stamp = resetStamp(resetsAt, now);
@@ -254,8 +259,19 @@ export function renderFrame(state: AppState, cols: number): string[] {
 
 		const stamp = usageStamp(row, state.now);
 		const marker: Part = stamp.active ? { t: ACTIVE_MARKER, c: BOLD_GREEN } : { t: MARKER, c: BOLD_WHITE };
+		const updated = row.fetchedAt === undefined ? "" : updatedStamp(row.fetchedAt, state.now);
 		const stampLine =
-			stamp.text.length === 0 ? null : compose([{ t: GUIDE, c: DIM }, { t: pad("", titleWidth + 1) }, { t: stamp.text, c: stamp.active ? GREEN : DIM }], width);
+			stamp.text.length === 0 && updated.length === 0
+				? null
+				: compose(
+						[
+							{ t: GUIDE, c: DIM },
+							{ t: pad("", titleWidth + 1) },
+							{ t: stamp.text, c: stamp.active ? GREEN : DIM },
+							{ t: stamp.text.length > 0 && updated.length > 0 ? ` · ${updated}` : updated, c: DIM },
+						],
+						width,
+					);
 
 		if (row.windows.length === 0) {
 			lines.push(

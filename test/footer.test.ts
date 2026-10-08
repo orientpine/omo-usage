@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createFooterExtension, createUsagePoller, FOOTER_REFRESH_MS, renderFooter, sessionSlot, type ExtensionContextLike } from "../src/footer.ts";
 import { displayWidth } from "../src/render.ts";
 import type { AccountRow, UsageWindow } from "../src/types.ts";
@@ -58,11 +61,11 @@ describe("renderFooter", () => {
 		expect(strip(renderFooter(ROWS, { provider: "anthropic-subscription", slot: null }, 120, NOW))).toBe("Claude │ pool ▇✗▇ │ ⚠ Codex·dxlab 7d 4%");
 	});
 
-	test("지금 계정이 막대 없이 만료면 사유를, 429로 값을 붙든 중이면 재시도 시각을 적는다", () => {
+	test("지금 계정이 막대 없이 만료면 사유를 적고, 429로 값을 붙든 중이어도 재시도 대신 평소처럼 리셋 시각을 보인다", () => {
 		expect(at(120)).not.toContain("retry");
 		expect(strip(renderFooter(ROWS, { provider: "anthropic-subscription", slot: "cbaekdong" }, 120, NOW))).toMatch(/^Claude·cbaekdong expired │ pool ▇▇/);
-		const limited = ROWS.map((r) => (r.slot === "orientpine" ? { ...r, detail: "rate limited (HTTP 429)", retryAt: NOW + 120_000 } : r));
-		expect(strip(renderFooter(limited, FOCUS, 120, NOW))).toMatch(/▏ 76% 7d · retry \d\d:\d\d │/);
+		const limited = ROWS.map((r) => (r.slot === "orientpine" ? { ...r, retryAt: NOW + 120_000 } : r));
+		expect(strip(renderFooter(limited, FOCUS, 120, NOW))).toBe(at(120));
 	});
 
 	test("조회할 계정이 없는 provider면 줄을 그리지 않는다", () => {
@@ -117,7 +120,7 @@ describe("sessionSlot", () => {
 });
 
 describe("createUsagePoller", () => {
-	test("300초마다 조회하고, 429면 이전 막대를 지키며, retryAt 전에는 그 계정을 부르지 않는다", async () => {
+	test("300초마다 공유 캐시를 거쳐 조회하고, 429면 이전 막대를 지키며, retryAt 전에는 그 계정을 부르지 않는다", async () => {
 		let t = NOW;
 		let status = 200;
 		const calls: string[] = [];
@@ -135,6 +138,8 @@ describe("createUsagePoller", () => {
 			readAuth: async () => AUTH,
 			readPool: async () => null,
 			fetchImpl,
+			cachePath: join(mkdtempSync(join(tmpdir(), "omo-usage-test-")), "usage.json"),
+			intervalMs: FOOTER_REFRESH_MS,
 			now: () => t,
 			setTimer: (fn, ms) => {
 				timers.push({ fn, ms });
@@ -198,6 +203,7 @@ describe("createFooterExtension", () => {
 			readAuth: async () => AUTH,
 			readPool: async () => null,
 			fetchImpl,
+			cachePath: join(mkdtempSync(join(tmpdir(), "omo-usage-test-")), "usage.json"),
 			now: () => NOW,
 			setTimer: () => 0,
 			clearTimer: () => {},

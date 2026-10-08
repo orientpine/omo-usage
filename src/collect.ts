@@ -23,6 +23,8 @@ export interface CollectOptions {
 	readonly previous?: readonly AccountRow[];
 	/** senpi의 credential-pool-state.json 내용. 어느 계정이 실제로 차감되는지는 여기에만 있다. */
 	readonly poolState?: unknown;
+	/** 이 provider/slot 키는 조회하지 않고 previous의 사용량을 그대로 쓴다 (공유 캐시가 아직 신선한 계정). */
+	readonly reuse?: ReadonlySet<string>;
 }
 
 function timeoutSignal(outer: AbortSignal | undefined): AbortSignal {
@@ -42,10 +44,26 @@ function retryAtFrom(response: Response, now: number): number {
 	return now + (Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : RATE_LIMIT_COOLDOWN_MS);
 }
 
+/** 이전 막대가 있으면 그대로 두고 재시도 시각만 붙인다 — 화면에는 오류 대신 마지막 성공 시각(updated HH:MM)이 남는다. */
 function rateLimited(row: AccountRow, previous: AccountRow | undefined, retryAt: number): AccountRow {
-	const detail = httpDetail(429);
-	if (previous && previous.windows.length > 0) return { ...previous, detail, retryAt };
-	return { ...row, status: "error", detail, windows: [], retryAt };
+	if (previous && previous.windows.length > 0) return { ...previous, retryAt };
+	return { ...row, status: "error", detail: httpDetail(429), windows: [], retryAt };
+}
+
+/** 조회하지 않은 계정: 명단(roster)의 현재 정보에 직전 사용량 필드만 얹는다. */
+function carry(row: AccountRow, previous: AccountRow): AccountRow {
+	const { status, detail, plan, windows, fetchedAt, retryAt, note, drained } = previous;
+	return {
+		...row,
+		status,
+		detail,
+		plan,
+		windows,
+		...(fetchedAt !== undefined ? { fetchedAt } : {}),
+		...(retryAt !== undefined ? { retryAt } : {}),
+		...(note !== undefined ? { note } : {}),
+		...(drained !== undefined ? { drained } : {}),
+	};
 }
 
 function requestFor(kind: UsageKind, secret: Secret, signal: AbortSignal): { url: string; init: RequestInit } {
@@ -95,30 +113,31 @@ async function fetchOne(row: AccountRow, secret: Secret, options: CollectOptions
 		}
 
 		const payload = await response.json();
+		const ok = { status: "ok", detail: null, fetchedAt: now } as const;
 		if (kind === "claude") {
 			const windows = parseClaudeUsage(payload);
 			return windows.length > 0
-				? { ...row, status: "ok", detail: null, windows }
+				? { ...row, ...ok, windows }
 				: { ...row, status: "error", detail: "no usage windows in response", windows: [] };
 		}
 
 		if (kind === "xai") {
 			const usage = parseXaiUsage(payload);
 			return usage.windows.length > 0
-				? { ...row, status: "ok", detail: null, windows: usage.windows, ...(usage.note !== null ? { note: usage.note } : {}) }
+				? { ...row, ...ok, windows: usage.windows, ...(usage.note !== null ? { note: usage.note } : {}) }
 				: { ...row, status: "error", detail: "no usage windows in response", windows: [] };
 		}
 
 		if (kind === "kimi") {
 			const windows = parseKimiUsage(payload);
 			return windows.length > 0
-				? { ...row, status: "ok", detail: null, windows }
+				? { ...row, ...ok, windows }
 				: { ...row, status: "error", detail: "no usage windows in response", windows: [] };
 		}
 
 		const usage = parseCodexUsage(payload, now);
 		return usage.windows.length > 0
-			? { ...row, status: "ok", detail: null, plan: usage.plan, windows: usage.windows }
+			? { ...row, ...ok, plan: usage.plan, windows: usage.windows }
 			: { ...row, status: "error", detail: "no usage windows in response", plan: usage.plan, windows: [] };
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -152,6 +171,7 @@ export async function collectUsage(auth: unknown, options: CollectOptions = {}):
 		if (row.status !== "loading") return row;
 		const key = accountKey(row.provider, row.slot);
 		const prev = previous.get(key);
+		if (prev !== undefined && options.reuse?.has(key)) return carry(row, prev);
 		if (prev?.retryAt !== undefined && prev.retryAt > now) return prev;
 		const secret = secrets.get(key);
 		if (!secret) return { ...row, status: "error" as const, detail: "no access token" };
