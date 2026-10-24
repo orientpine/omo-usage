@@ -3,7 +3,7 @@ import type { AccountRow, UsageWindow } from "./types.ts";
 import { collectShared } from "./cache.ts";
 import { readAuthFile } from "./credentials.ts";
 import { readPoolState } from "./pool.ts";
-import { BAR_CELLS, BAR_EMPTY, LEVEL_RED, compose, displayWidth, levelColor, resetStamp, type Part } from "./render.ts";
+import { BAR_CELLS, BAR_EMPTY, LEVEL_RED, compose, displayWidth, isStale, levelColor, resetStamp, type Part } from "./render.ts";
 
 /** 공유 캐시를 다시 읽는 주기 (2026-10-01). 실제 조회는 머신 전체에서 계정당 간격(기본 10분)마다 한 번만 한다 (cache.ts, 2026-10-08). */
 export const FOOTER_REFRESH_MS = 300_000;
@@ -67,7 +67,8 @@ function headParts(row: AccountRow, name: string, cells: number, withReset: bool
 			{ t: ` ${reason}`, c: YELLOW },
 		];
 	}
-	const color = levelColor(window.remainingPercent);
+	const stale = isStale(row, now);
+	const color = stale ? DIM : levelColor(window.remainingPercent);
 	const filled = Math.round((Math.min(100, Math.max(0, window.remainingPercent)) / 100) * cells);
 	const parts: Part[] = [
 		{ t: `${name} ▕${"█".repeat(filled)}`, c: color },
@@ -75,7 +76,8 @@ function headParts(row: AccountRow, name: string, cells: number, withReset: bool
 		{ t: `▏ ${window.remainingPercent}% ${window.label}`, c: color },
 	];
 	if (!withReset) return parts;
-	if (window.resetsAt !== null) parts.push({ t: ` · resets ${resetStamp(window.resetsAt, now)}`, c: color });
+	if (stale) parts.push({ t: " · stale", c: YELLOW });
+	else if (window.resetsAt !== null) parts.push({ t: ` · resets ${resetStamp(window.resetsAt, now)}`, c: color });
 	return parts;
 }
 

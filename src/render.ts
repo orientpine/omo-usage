@@ -28,6 +28,11 @@ const GREEN = "32";
 const BOLD_GREEN = "1;32";
 /** 이 시간 안에 성공 요청이 있었으면 senpi가 지금 그 계정을 쓰는 중으로 본다. */
 export const ACTIVE_WINDOW_MS = 10 * 60_000;
+/**
+ * 마지막 성공 조회가 이보다 오래된 막대는 지금 값이 아니다 (간격 10분의 세 배: 429 한두 번으로는 넘지 않는다).
+ * 그런 막대는 회색으로 그리고 갱신 시각 옆에 stale 한 마디만 단다 — 429 줄을 없앤 2026-10-08 결정처럼 조용하게.
+ */
+export const STALE_AFTER_MS = 30 * 60_000;
 const YELLOW = "33";
 const RED = "31";
 /**
@@ -230,6 +235,10 @@ export function usageStamp(row: AccountRow, now: number): UsageStamp {
 	return { text: "", active: false };
 }
 
+export function isStale(row: AccountRow, now: number): boolean {
+	return row.windows.length > 0 && row.fetchedAt !== undefined && now - row.fetchedAt > STALE_AFTER_MS;
+}
+
 export function levelColor(remaining: number): string {
 	if (remaining > 50) return LEVEL_GREEN;
 	if (remaining >= LOW_PERCENT) return LEVEL_AMBER;
@@ -301,6 +310,7 @@ export function renderFrame(state: AppState, cols: number): string[] {
 		const stamp = usageStamp(row, state.now);
 		const marker: Part = stamp.active ? { t: ACTIVE_MARKER, c: BOLD_GREEN } : { t: MARKER, c: BOLD_WHITE };
 		const updated = row.fetchedAt === undefined ? "" : updatedStamp(row.fetchedAt, state.now);
+		const stale = isStale(row, state.now);
 		const stampLine =
 			stamp.text.length === 0 && updated.length === 0
 				? null
@@ -310,6 +320,7 @@ export function renderFrame(state: AppState, cols: number): string[] {
 							{ t: pad("", titleWidth + 1) },
 							{ t: stamp.text, c: stamp.active ? GREEN : DIM },
 							{ t: stamp.text.length > 0 && updated.length > 0 ? ` · ${updated}` : updated, c: DIM },
+							{ t: stale ? " · stale" : "", c: YELLOW },
 						],
 						width,
 					);
@@ -331,7 +342,7 @@ export function renderFrame(state: AppState, cols: number): string[] {
 
 		row.windows.forEach((window: UsageWindow, index: number) => {
 			const shape = bar(window.remainingPercent, barWidth);
-			const color = levelColor(window.remainingPercent);
+			const color = stale ? DIM : levelColor(window.remainingPercent);
 			lines.push(
 				compose(
 					[

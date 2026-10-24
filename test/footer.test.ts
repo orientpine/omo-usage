@@ -68,6 +68,15 @@ describe("renderFooter", () => {
 		expect(strip(renderFooter(limited, FOCUS, 120, NOW))).toBe(at(120));
 	});
 
+	test("지금 계정 값이 30분보다 오래됐으면 막대를 회색으로 그리고 리셋 시각 대신 stale을 단다", () => {
+		const stale = ROWS.map((r) => (r.slot === "orientpine" ? { ...r, fetchedAt: NOW - 9 * 3_600_000 } : r));
+		const line = renderFooter(stale, FOCUS, 120, NOW);
+		expect(strip(line)).toMatch(/^Claude·orientpine ▕[█░]{14}▏ 76% 7d · stale │ pool ✗▇ │ ⚠ Codex·dxlab 7d 4%$/);
+		expect(line).toContain("\u001B[90mClaude·orientpine ▕");
+		const fresh = ROWS.map((r) => (r.slot === "orientpine" ? { ...r, fetchedAt: NOW - 5 * 60_000 } : r));
+		expect(strip(renderFooter(fresh, FOCUS, 120, NOW))).toBe(at(120));
+	});
+
 	test("조회할 계정이 없는 provider면 줄을 그리지 않는다", () => {
 		expect(renderFooter(ROWS, { provider: "google", slot: "default" }, 120, NOW)).toBe("");
 		expect(renderFooter(ROWS, { provider: "openrouter", slot: null }, 120, NOW)).toBe("");

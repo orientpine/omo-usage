@@ -6,6 +6,7 @@ import type { AccountRow } from "./types.ts";
 import { buildRoster } from "./auth.ts";
 import { collectUsage, RATE_LIMIT_COOLDOWN_MS, type CollectOptions } from "./collect.ts";
 import { accountKey } from "./credentials.ts";
+import { readSenpiUsage, scopedSlug, senpiUsagePath, type SenpiReading } from "./senpi.ts";
 
 /**
  * 머신 공유 사용량 캐시. omo 세션마다 뜨는 footer 위젯·TUI·--once·--json이 모두 이 파일 하나를 함께 읽고 쓴다.
@@ -158,6 +159,19 @@ export interface SharedOptions extends CollectOptions {
 	/** TUI [r]: 간격은 무시하되 쿨다운과 retryAt은 지킨다. */
 	readonly force?: boolean;
 	readonly sleep?: (ms: number) => Promise<void>;
+	/** senpi가 받아 둔 사용량 파일 (senpi.ts). 기본은 senpiUsagePath(). */
+	readonly senpiUsagePath?: string;
+}
+
+/** 시계가 조금 어긋난 프로세스의 값까지는 받되, 그보다 미래 시각은 믿지 않는다. */
+const CLOCK_SKEW_MS = 60_000;
+
+/** senpi 값을 이전 행에 얹는다. 모델별 창은 이전 막대의 라벨(Anthropic display_name)을 그대로 쓴다. */
+function adopt(base: AccountRow, reading: SenpiReading): AccountRow {
+	const { retryAt: _retryAt, ...rest } = base;
+	const labels = new Map(base.windows.filter((w) => w.kind === "scoped").map((w) => [scopedSlug(w.label), w.label]));
+	const windows = reading.windows.map((w) => (w.kind === "scoped" ? { ...w, label: labels.get(scopedSlug(w.label)) ?? w.label } : w));
+	return { ...rest, status: "ok", detail: null, windows, fetchedAt: reading.fetchedAt };
 }
 
 /** 캐시에 저장할 때는 세션마다 다시 붙이는 pool 정보(lastUsedAt)를 뺀다. */
@@ -176,12 +190,36 @@ export async function collectShared(auth: unknown, options: SharedOptions = {}):
 	const lockPath = `${path}.lock`;
 	const intervalMs = options.intervalMs ?? refreshIntervalMs();
 	const sleep = options.sleep ?? ((ms: number) => Bun.sleep(ms));
-	const keys = buildRoster(auth, now)
-		.filter((row) => row.status === "loading")
-		.map((row) => accountKey(row.provider, row.slot));
-	const dueIn = (cache: ReadonlyMap<string, CacheEntry>): Set<string> => new Set(keys.filter((key) => isDue(cache.get(key), now, intervalMs, options.force === true)));
+	const roster = new Map(
+		buildRoster(auth, now)
+			.filter((row) => row.status === "loading")
+			.map((row) => [accountKey(row.provider, row.slot), row] as const),
+	);
+	const keys = [...roster.keys()];
+	const senpi = await readSenpiUsage(options.senpiUsagePath ?? senpiUsagePath());
+	/** 캐시보다 새로운 senpi 값. 간격 안이면 그 계정은 부르지 않는다 — 같은 토큰으로 또 부르면 senpi 직후 429 창에 걸릴 뿐이다. */
+	const newer = (cache: ReadonlyMap<string, CacheEntry>, key: string): SenpiReading | undefined => {
+		const reading = senpi.get(key);
+		if (reading === undefined || reading.fetchedAt > now + CLOCK_SKEW_MS) return undefined;
+		return reading.fetchedAt > (cache.get(key)?.row.fetchedAt ?? -Infinity) ? reading : undefined;
+	};
+	const covered = (cache: ReadonlyMap<string, CacheEntry>, key: string): boolean => {
+		const reading = newer(cache, key);
+		return reading !== undefined && now - reading.fetchedAt < intervalMs;
+	};
+	const dueIn = (cache: ReadonlyMap<string, CacheEntry>): Set<string> =>
+		new Set(keys.filter((key) => !covered(cache, key) && isDue(cache.get(key), now, intervalMs, options.force === true)));
+	const previousOf = (cache: ReadonlyMap<string, CacheEntry>): AccountRow[] => {
+		const rows = new Map([...cache].map(([key, entry]) => [key, entry.row]));
+		for (const key of keys) {
+			const reading = newer(cache, key);
+			const base = rows.get(key) ?? roster.get(key);
+			if (reading !== undefined && base !== undefined) rows.set(key, adopt(base, reading));
+		}
+		return [...rows.values()];
+	};
 	const serve = (cache: ReadonlyMap<string, CacheEntry>, due: ReadonlySet<string>): Promise<AccountRow[]> =>
-		collectUsage(auth, { ...options, now, previous: [...cache.values()].map((entry) => entry.row), reuse: new Set(keys.filter((key) => !due.has(key))) });
+		collectUsage(auth, { ...options, now, previous: previousOf(cache), reuse: new Set(keys.filter((key) => !due.has(key))) });
 
 	const deadline = Date.now() + LOCK_WAIT_MS;
 	for (;;) {
@@ -189,7 +227,7 @@ export async function collectShared(auth: unknown, options: SharedOptions = {}):
 		let lock: string | null;
 		try {
 			cache = await readCache(path);
-			if (dueIn(cache).size === 0) return serve(cache, new Set());
+			if (dueIn(cache).size === 0 && !keys.some((key) => newer(cache, key))) return serve(cache, new Set());
 			lock = await acquireLock(lockPath, now);
 		} catch {
 			return collectUsage(auth, options);
@@ -202,12 +240,18 @@ export async function collectShared(auth: unknown, options: SharedOptions = {}):
 			// 잠금을 기다리는 사이 다른 프로세스가 채웠을 수 있으니 다시 읽고 남은 것만 조회한다.
 			cache = await readCache(path);
 			const due = dueIn(cache);
+			// senpi 값은 senpi가 다음에 429를 받으면 오류 읽기로 바뀌어 사라진다. 본 것을 캐시에 남겨 두고, 그 성공 시각을 조회 시각으로 친다.
+			const adopted = new Map(keys.flatMap((key) => {
+				const reading = newer(cache, key);
+				return reading === undefined ? [] : [[key, Math.max(cache.get(key)?.checkedAt ?? 0, reading.fetchedAt)] as const];
+			}));
 			const rows = await serve(cache, due);
-			if (due.size > 0) {
+			if (due.size > 0 || adopted.size > 0) {
 				const merged = await readCache(path);
 				for (const row of rows) {
 					const key = accountKey(row.provider, row.slot);
-					if (due.has(key)) merged.set(key, { checkedAt: now, row: stored(row) });
+					const checkedAt = due.has(key) ? now : adopted.get(key);
+					if (checkedAt !== undefined) merged.set(key, { checkedAt, row: stored(row) });
 				}
 				await writeCache(path, merged).catch(() => {});
 			}

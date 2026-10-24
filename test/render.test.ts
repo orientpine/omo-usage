@@ -182,6 +182,25 @@ describe("renderFrame", () => {
 		expect(bare).toContain(`error · rate limited (HTTP 429) · retry ${hm(retryAt)}`);
 	});
 
+	test("30분보다 오래된 값은 막대를 흐리게(회색) 그리고 갱신 시각 옆에 노란 stale을 단다", () => {
+		const lines = renderFrame(
+			state([
+				row({ fetchedAt: NOW - 9 * 3_600_000, windows: [{ label: "5h", kind: "session", remainingPercent: 80, resetsAt: null }] }),
+				row({ slot: "bob", label: "bob", fetchedAt: NOW - 30 * 60_000, windows: [{ label: "5h", kind: "session", remainingPercent: 80, resetsAt: null }] }),
+			]),
+			120,
+		);
+		const plain = lines.map(strip);
+		const alice = plain.findIndex((l) => l.startsWith("  ● alice"));
+		const bob = plain.findIndex((l) => l.startsWith("  ● bob"));
+		expect(lines[alice]).not.toContain("\u001B[38;2;74;222;128m");
+		expect(lines[alice]).toContain("\u001B[90m▕");
+		expect(plain[alice + 1]).toMatch(/updated (\d\d\/\d\d )?\d\d:\d\d · stale$/);
+		expect(lines[alice + 1]).toContain("\u001B[33m · stale");
+		expect(lines[bob]).toContain("\u001B[38;2;74;222;128m");
+		expect(plain[bob + 1]).not.toContain("stale");
+	});
+
 	test("최근 차감된 계정은 ▶ 마커와 '사용 중'을, 나머지는 '마지막 사용'을 단다", () => {
 		const lines = renderFrame(
 			state([

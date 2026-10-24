@@ -1,7 +1,8 @@
 import { cachePath, collectShared } from "./cache.ts";
 import { readAuthFile, AUTH_PATH } from "./credentials.ts";
 import { readPoolState } from "./pool.ts";
-import { setDisplayTimeZone, updatedStamp, usageStamp } from "./render.ts";
+import { isStale, setDisplayTimeZone, updatedStamp, usageStamp } from "./render.ts";
+import { senpiUsagePath } from "./senpi.ts";
 import { configPath, resolveTimeZone } from "./timezone.ts";
 
 const timeZone = resolveTimeZone();
@@ -18,6 +19,9 @@ Usage:
 Credentials: ${AUTH_PATH} (read only)
 Shared cache: ${cachePath()} (every omo-usage process reuses it; an account is fetched
   at most once per OMO_USAGE_REFRESH_SECONDS, default 600)
+senpi usage: ${senpiUsagePath()} (read only; a fresher Claude reading senpi already
+  fetched is used instead of asking again; OMO_USAGE_SENPI_USAGE_PATH moves it)
+Stale: a value older than 30 minutes is drawn grey and marked "stale"
 Time zone: OMO_USAGE_TZ, else "timeZone" in ${configPath()}, else the system zone
   (IANA name such as Asia/Seoul; KST is accepted)`;
 
@@ -29,7 +33,7 @@ function plain(rows: Awaited<ReturnType<typeof collectShared>>, now: number): st
 			const windows = row.windows.map((w) => `${w.label} ${w.remainingPercent}% left`).join(" · ");
 			const status = row.status === "ok" ? (row.note ? `${windows} · ${row.note}` : windows) : `${row.status.toUpperCase()}${row.detail ? ` (${row.detail})` : ""}`;
 			const stamp = usageStamp(row, now);
-			const updated = row.fetchedAt === undefined ? "" : ` · ${updatedStamp(row.fetchedAt, now)}`;
+			const updated = row.fetchedAt === undefined ? "" : ` · ${updatedStamp(row.fetchedAt, now)}${isStale(row, now) ? " · stale" : ""}`;
 			return `${row.provider.padEnd(providerWidth)} ${row.label.padEnd(12)} ${status}${stamp.text.length > 0 ? ` · ${stamp.text}` : ""}${updated}`;
 		})
 		.join("\n");
