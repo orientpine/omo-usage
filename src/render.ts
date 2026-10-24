@@ -208,13 +208,16 @@ function resetForms(resetsAt: number | null, now: number): string[] {
 
 /**
  * 참조 디자인의 꼬리: "88% left · resets …". 20% 미만이면 running out을 붙이되, 언제 돌아오는지 알 수 있게 리셋 시각은 지우지 않는다.
- * max칸에 안 들면 …로 자르는 대신 상대 시간을 줄이고, 그다음 빼고, 마지막에 running out(빨강과 비율이 이미 말해 준다)을 뺀다.
+ * max칸에 안 들면 …로 자르는 대신 상대 시간을 줄이고, 그다음 running out(빨강과 비율이 이미 말해 준다)을 빼고, 마지막에 상대 시간을 뺀다.
+ * 바닥난 창일수록 언제 돌아오는지가 중요하니 남은 시간을 끝까지 남긴다.
  */
 function usageTail(window: UsageWindow, now: number, max = Number.POSITIVE_INFINITY): string {
 	const head = ` ${window.remainingPercent.toString().padStart(3)}% left`;
 	const low = window.remainingPercent < LOW_PERCENT ? ["running out"] : [];
 	const resets = resetForms(window.resetsAt, now);
-	const variants = [...resets.map((reset) => [...low, reset]), [resets[resets.length - 1] ?? ""]].map((details) => {
+	const countdowns = resets.slice(0, -1);
+	const last = resets[resets.length - 1] ?? "";
+	const variants = [...countdowns.map((reset) => [...low, reset]), ...countdowns.map((reset) => [reset]), [...low, last], [last]].map((details) => {
 		const shown = details.filter((part) => part.length > 0);
 		return shown.length > 0 ? `${head} · ${shown.join(" · ")}` : head;
 	});
