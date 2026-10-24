@@ -106,6 +106,21 @@ senpi가 쓰는 두 파일을 열어 볼 뿐 그 파일들에는 한 바이트�
 | `error · …` | HTTP 오류·시간 초과·해석 불가 응답. 숫자를 지어내지 않는다 |
 | `n/a · …` | 사용량 API가 없는 provider(google) |
 
+### 시간대
+
+화면의 모든 시각(헤더 `updated`, 계정별 `updated HH:MM`, 리셋 시각, `retry HH:MM`, omo footer 줄)은 기본으로 시스템 시간대를 따른다. 다른 시간대로 보려면 IANA 이름을 정한다(`KST`도 Asia/Seoul로 받는다).
+
+```bash
+# 이 머신의 모든 omo-usage 프로세스(TUI, --once, footer 줄)에 적용
+mkdir -p ~/.config/omo-usage
+echo '{ "timeZone": "Asia/Seoul" }' > ~/.config/omo-usage/config.json
+
+# 또는 한 번만 (파일보다 앞선다)
+OMO_USAGE_TZ=Asia/Seoul omo-usage
+```
+
+순서는 `OMO_USAGE_TZ` → `$XDG_CONFIG_HOME/omo-usage/config.json`(기본 `~/.config`)의 `timeZone` → 시스템 시간대. 시간대를 정하면 헤더에 이름이 붙고(`updated 14:12:24 KST`), 날짜도 그 시간대를 따른다: 10/23 15:59 UTC 리셋은 KST로 `resets 10/24 00:59`. 모르는 이름이나 깨진 파일이어도 멈추지 않고, 시스템 시각으로 보여 주며 이유를 노란 줄로 띄운다(`--once`/`--json`은 stderr). JSON 출력은 그대로 epoch 밀리초다. 실행 중인 프로세스는 시작할 때 설정을 읽으므로, 바꾼 뒤에는 TUI(`q` 후 `omo-usage`)와 omo 세션을 다시 띄운다.
+
 ### JSON 출력
 
 `--json`은 계정 배열을 준다. 토큰·이메일은 들어가지 않는다.

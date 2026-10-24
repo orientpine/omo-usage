@@ -106,6 +106,21 @@ It opens the two files senpi uses and writes not a single byte to them. Token re
 | `error · …` | HTTP error, timeout, or a response that cannot be parsed. No numbers are invented |
 | `n/a · …` | A provider with no usage API (google) |
 
+### Time zone
+
+Every clock on the screen (the header `updated`, each account's `updated HH:MM`, reset times, `retry HH:MM`, and the omo footer line) uses the system time zone by default. To read them in another zone, set an IANA name (`KST` is also accepted as Asia/Seoul):
+
+```bash
+# for every omo-usage process on this machine (TUI, --once, footer line)
+mkdir -p ~/.config/omo-usage
+echo '{ "timeZone": "Asia/Seoul" }' > ~/.config/omo-usage/config.json
+
+# or for one run (overrides the file)
+OMO_USAGE_TZ=Asia/Seoul omo-usage
+```
+
+The order is `OMO_USAGE_TZ` → `timeZone` in `$XDG_CONFIG_HOME/omo-usage/config.json` (default `~/.config`) → system zone. With a zone set, the header names it (`updated 14:12:24 KST`), and dates follow that zone: a reset at 15:59 UTC on 10/23 reads `resets 10/24 00:59` in KST. An unknown name or a broken file never stops the program; it shows system time with a yellow line saying why (`--once`/`--json` print it to stderr). JSON output stays in epoch milliseconds. Running processes read the setting at start, so restart the TUI (`q`, then `omo-usage`) and omo sessions after changing it.
+
 ### JSON output
 
 `--json` gives you an array of accounts. No tokens, no email addresses.
