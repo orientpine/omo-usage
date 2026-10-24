@@ -104,6 +104,7 @@ senpi가 쓰는 두 파일을 열어 볼 뿐 그 파일들에는 한 바이트�
 | `expired · refresh failed · run /login <provider> in omo (name: <slot>)` | refresh token까지 죽은 경우. omo TUI에서 `/login`으로 재인증 |
 | `rate limited (HTTP 429) · retry HH:MM` | 아직 이전 값이 없을 때만 뜬다. 이전 값이 있으면 막대와 `updated HH:MM`을 그대로 두고, 재시도 시각 전에는 어느 프로세스도 다시 부르지 않는다 |
 | `error · …` | HTTP 오류·시간 초과·해석 불가 응답. 숫자를 지어내지 않는다 |
+| 회색 막대와 `updated HH:MM · stale` | 마지막 성공 조회가 **30분**보다 오래돼 지금 값이 아니다. 막대를 초록·주황·빨강 대신 회색으로 그리고 갱신 시각 뒤에 노란 `stale`을 단다(omo footer 줄은 리셋 시각 대신 `· stale`, `--once`는 끝에 `· stale`) |
 | `n/a · …` | 사용량 API가 없는 provider(google) |
 
 ### 시간대
@@ -196,6 +197,8 @@ Claude·orientpine ▕███████████░░░▏ 76% 7d · re
 **계정마다 `rate limited (HTTP 429)`가 자주 뜬다.**
 Anthropic usage 엔드포인트는 토큰당 마지막 성공 뒤 약 95초 동안 429를 돌려준다. 예전 버전은 omo 세션마다 따로 조회해서, 세션이 여럿이면 공유 계정이 늘 이 창에 걸렸다. 이제는 모든 프로세스가 캐시 하나를 같이 쓰고 계정당 10분에 한 번만 조회하며, 429가 와도 직전 막대(와 `updated HH:MM`)를 그대로 둔다. 업데이트 전에 뜨어 있던 세션은 재시작할 때까지 예전 코드로 조회한다.
 
+senpi도 로그인된 Claude 계정을 5분마다 스스로 조회해 `~/.omo/agent/subscription-usage.json`에 남긴다(계정 이름과 비율만, 토큰 없음). 여러 리눅스 계정이 같은 로그인을 빌려 쓰는 머신에서는 그 senpi들이 모두 같은 토큰으로 묻기 때문에, omo-usage가 따로 부르면 거의 늘 그 429 창에 걸린다(2026-10-24에 한 계정 막대가 9시간 전 값으로 남았다). 그래서 omo-usage는 이 파일을 읽는다(읽기만, `OMO_USAGE_SENPI_USAGE_PATH`로 옮길 수 있다): 자기 값보다 새로운 Claude 성공 값이 있으면 senpi의 시각을 `updated HH:MM`으로 보여 주고, 공유 캐시에 남겨 senpi가 다음에 429를 받아도 사라지지 않게 하며, 그 값이 조회 간격보다 젊으면 그 계정은 Anthropic을 아예 부르지 않는다. senpi가 오류를 붙인 값은 그 시각이 성공이 아니라 실패 시각이라 쓰지 않는다. 어느 쪽에서도 새 값이 없으면 그 줄은 회색이 되고 `stale`이 붙는다.
+
 **xAI 제품별 내역은 왜 막대가 아닌가?**
 `GrokBuild 12% · GrokImagine 1%`는 각 제품의 한도가 아니라 같은 주간 풀에서 쓴 몫이라, 잔여 막대로 그리면 뜻이 틀린다. 막대는 풀 전체(`creditUsagePercent`) 하나만 둔다.
 
@@ -249,6 +252,7 @@ src/
   tui.ts          대체 화면, 키 입력, 150초 캐시 재읽기([r]은 강제 조회), 5초 pool-state 갱신, 429 재시도 예약
   cache.ts        머신 공유 캐시 파일 + 잠금: 오래된 계정만, 한 번, 한 프로세스에서 조회
   collect.ts      provider별 fetch, 429 쿨다운, 직전 조회 대비 잔여 감소 감지
+  senpi.ts        senpi의 subscription-usage.json → senpi가 이미 받은 Claude 값 (읽기 전용)
   parse.ts        응답 → UsageWindow (Claude / Codex / xAI / Kimi)
   auth.ts         auth.json → 계정 로스터, 만료 판정과 사유, 고정 슬롯
   pool.ts         credential-pool-state.json → 슬롯별 마지막 차감 시각 (▶ 사용 중)

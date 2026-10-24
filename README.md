@@ -104,6 +104,7 @@ It opens the two files senpi uses and writes not a single byte to them. Token re
 | `expired · refresh failed · run /login <provider> in omo (name: <slot>)` | The refresh token is dead too. Re-authenticate with `/login` in the omo TUI |
 | `rate limited (HTTP 429) · retry HH:MM` | Only when there is no previous value yet. With a previous value the bar stays as is with its `updated HH:MM`, and no process calls the account again before the retry time |
 | `error · …` | HTTP error, timeout, or a response that cannot be parsed. No numbers are invented |
+| grey bars and `updated HH:MM · stale` | The last successful fetch is more than **30 minutes** old, so the numbers are not current. The bar is drawn grey instead of green/amber/red and the yellow word `stale` follows the update time (the omo footer line shows `· stale` instead of the reset time, `--once` appends `· stale`) |
 | `n/a · …` | A provider with no usage API (google) |
 
 ### Time zone
@@ -196,6 +197,8 @@ There is not. `omo auth` only has `check` / `print-api-key` / `print-bearer-toke
 **`rate limited (HTTP 429)` keeps showing up on my accounts.**
 The Anthropic usage endpoint returns 429 for roughly 95 seconds after the last success per token. Older versions fetched once per omo session, so a dozen sessions kept every shared account in that window. Now all processes share one cache and one fetch per account per 10 minutes, and a 429 only keeps the previous bar (with its `updated HH:MM`). Sessions started before the update still run the old code until they are restarted.
 
+senpi itself also polls every signed-in Claude account (every 5 minutes) and keeps what it got in `~/.omo/agent/subscription-usage.json` (account names and percentages only, no tokens). On a machine where several Linux accounts borrow the same login, each of their senpi processes asks about the same token, so a separate omo-usage request lands in that 429 window almost every time; on 2026-10-24 that left one account's bars 9 hours old. omo-usage therefore reads that file (read only; `OMO_USAGE_SENPI_USAGE_PATH` moves it): a successful Claude reading newer than its own is shown with senpi's time as `updated HH:MM`, kept in the shared cache so senpi's next 429 does not take it away, and while it is younger than the refresh interval omo-usage does not call Anthropic for that account at all. Readings senpi marked with an error are ignored, because their time is the failure, not a success. If no fresh value arrives from either side, the row turns grey and says `stale`.
+
 **Why is the xAI per-product breakdown not a bar?**
 `GrokBuild 12% · GrokImagine 1%` are not each product's own limit but their shares of the same weekly pool, so drawing them as remaining bars would say something false. The only bar is the pool as a whole (`creditUsagePercent`).
 
@@ -249,6 +252,7 @@ src/
   tui.ts          alternate screen, key input, 150 s cache re-read ([r] forces a fetch), 5 s pool-state refresh, 429 retry scheduling
   cache.ts        machine-wide cache file + lock: fetch only stale accounts, once, in one process
   collect.ts      per-provider fetch, 429 cooldown, drop detection against the previous fetch
+  senpi.ts        senpi's subscription-usage.json -> the Claude readings senpi already fetched (read only)
   parse.ts        response -> UsageWindow (Claude / Codex / xAI / Kimi)
   auth.ts         auth.json -> account roster, expiry verdict and reason, pinned slots
   pool.ts         credential-pool-state.json -> last drain time per slot (the in-use marker)
