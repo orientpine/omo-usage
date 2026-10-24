@@ -1,7 +1,11 @@
 import { cachePath, collectShared } from "./cache.ts";
 import { readAuthFile, AUTH_PATH } from "./credentials.ts";
 import { readPoolState } from "./pool.ts";
-import { updatedStamp, usageStamp } from "./render.ts";
+import { setDisplayTimeZone, updatedStamp, usageStamp } from "./render.ts";
+import { configPath, resolveTimeZone } from "./timezone.ts";
+
+const timeZone = resolveTimeZone();
+setDisplayTimeZone(timeZone);
 
 const HELP = `omo-usage — remaining usage for every account logged in to omo-ai
 
@@ -13,7 +17,9 @@ Usage:
 
 Credentials: ${AUTH_PATH} (read only)
 Shared cache: ${cachePath()} (every omo-usage process reuses it; an account is fetched
-  at most once per OMO_USAGE_REFRESH_SECONDS, default 600)`;
+  at most once per OMO_USAGE_REFRESH_SECONDS, default 600)
+Time zone: OMO_USAGE_TZ, else "timeZone" in ${configPath()}, else the system zone
+  (IANA name such as Asia/Seoul; KST is accepted)`;
 
 function plain(rows: Awaited<ReturnType<typeof collectShared>>, now: number): string {
 	// provider id 길이가 senpi 버전마다 달라서(anthropic-subscription 22자) 고정 폭 대신 가장 긴 id에 맞춘다.
@@ -39,6 +45,7 @@ if (args.has("--help") || args.has("-h")) {
 if (args.has("--json") || args.has("--once")) {
 	const [auth, poolState] = await Promise.all([readAuthFile(), readPoolState()]);
 	const rows = await collectShared(auth, { poolState });
+	if (timeZone.notice) console.error(`omo-usage: ${timeZone.notice}`);
 	console.log(args.has("--json") ? JSON.stringify(rows, null, 2) : plain(rows, Date.now()));
 	process.exit(0);
 }

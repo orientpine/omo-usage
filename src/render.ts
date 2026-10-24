@@ -1,3 +1,4 @@
+import type { TimeZoneSetting } from "./timezone.ts";
 import type { AccountRow, UsageWindow } from "./types.ts";
 
 export interface AppState {
@@ -106,14 +107,51 @@ function two(value: number): string {
 	return value.toString().padStart(2, "0");
 }
 
+function wallFormatter(zone: string | undefined): Intl.DateTimeFormat {
+	return new Intl.DateTimeFormat("en-US", { timeZone: zone, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" });
+}
+
+let display: TimeZoneSetting = { zone: undefined, notice: null };
+let formatter = wallFormatter(undefined);
+
+/** 화면의 모든 시각을 이 시간대로 그린다 (timezone.ts resolveTimeZone의 결과). zone이 undefined면 시스템 시간대. */
+export function setDisplayTimeZone(setting: TimeZoneSetting): void {
+	display = setting;
+	formatter = wallFormatter(setting.zone);
+}
+
+/** 헤더에 붙이는 시간대 이름. 시스템 시간대를 그대로 쓰면 빈 문자열이다. Intl은 Asia/Seoul을 "GMT+9"로만 주므로 KST는 직접 단다. */
+export function zoneLabel(at: number): string {
+	if (display.zone === undefined) return "";
+	if (display.zone === "Asia/Seoul") return "KST";
+	const part = new Intl.DateTimeFormat("en-US", { timeZone: display.zone, timeZoneName: "short" }).formatToParts(at).find((p) => p.type === "timeZoneName");
+	return part?.value ?? display.zone;
+}
+
+interface Wall {
+	readonly year: number;
+	readonly month: number;
+	readonly day: number;
+	readonly hour: number;
+	readonly minute: number;
+	readonly second: number;
+}
+
+function wall(ms: number): Wall {
+	const parts: Record<string, number> = {};
+	for (const part of formatter.formatToParts(ms)) parts[part.type] = Number(part.value);
+	return { year: parts["year"] ?? 0, month: parts["month"] ?? 0, day: parts["day"] ?? 0, hour: parts["hour"] ?? 0, minute: parts["minute"] ?? 0, second: parts["second"] ?? 0 };
+}
+
 export function clock(date: Date): string {
-	return `${two(date.getHours())}:${two(date.getMinutes())}`;
+	const w = wall(date.getTime());
+	return `${two(w.hour)}:${two(w.minute)}`;
 }
 
 /** 로캘에 따라 "7시 30분 0초" 같은 문자열이 나오지 않도록 직접 만든다. */
 function stampOf(ms: number): string {
-	const date = new Date(ms);
-	return `${clock(date)}:${two(date.getSeconds())}`;
+	const w = wall(ms);
+	return `${two(w.hour)}:${two(w.minute)}:${two(w.second)}`;
 }
 
 function relative(ms: number): string {
@@ -132,10 +170,11 @@ function relative(ms: number): string {
 
 /** 리셋 시각: 오늘이면 "16:00", 아니면 "09/22 14:00". */
 export function resetStamp(resetsAt: number, now: number): string {
-	const date = new Date(resetsAt);
-	const today = new Date(now);
-	const sameDay = date.getFullYear() === today.getFullYear() && date.getMonth() === today.getMonth() && date.getDate() === today.getDate();
-	return sameDay ? clock(date) : `${two(date.getMonth() + 1)}/${two(date.getDate())} ${clock(date)}`;
+	const date = wall(resetsAt);
+	const today = wall(now);
+	const sameDay = date.year === today.year && date.month === today.month && date.day === today.day;
+	const hm = `${two(date.hour)}:${two(date.minute)}`;
+	return sameDay ? hm : `${two(date.month)}/${two(date.day)} ${hm}`;
 }
 
 /** 계정별 마지막 성공 조회 시각. 공유 캐시라 실시간이 아니고, 429 동안에는 이 시각의 막대가 그대로 남는다. */
@@ -225,7 +264,8 @@ export function renderFrame(state: AppState, cols: number): string[] {
 	const width = Math.max(40, cols);
 	const lines: string[] = [];
 
-	const stamp = state.updatedAt === null ? "not yet" : stampOf(state.updatedAt);
+	const label = state.updatedAt === null ? "" : zoneLabel(state.updatedAt);
+	const stamp = state.updatedAt === null ? "not yet" : `${stampOf(state.updatedAt)}${label ? ` ${label}` : ""}`;
 	const ok = state.rows.filter((r) => r.status === "ok").length;
 	const head = "  omo-ai account usage";
 	const meta = `accounts ${state.rows.length} · ok ${ok} · updated ${stamp}${state.refreshing ? " · loading…" : ""}  `;
@@ -236,6 +276,7 @@ export function renderFrame(state: AppState, cols: number): string[] {
 	lines.push(compose([{ t: "  " + "─".repeat(Math.max(0, width - 4)), c: DIM }], width));
 
 	if (state.error) lines.push(compose([{ t: "  " }, { t: state.error, c: RED }], width));
+	if (display.notice) lines.push(compose([{ t: "  " }, { t: display.notice, c: YELLOW }], width));
 
 	if (state.rows.length === 0) {
 		lines.push("");
