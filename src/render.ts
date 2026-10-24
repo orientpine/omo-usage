@@ -187,20 +187,38 @@ export function updatedStamp(fetchedAt: number, now: number): string {
 	return `updated ${resetStamp(fetchedAt, now)}`;
 }
 
-function formatReset(resetsAt: number | null, now: number): string {
-	if (resetsAt === null) return "";
-	const stamp = resetStamp(resetsAt, now);
-	const diff = resetsAt - now;
-	return diff <= 0 ? `reset ${stamp}` : `resets ${stamp} · ${relative(diff)}`;
+/** "6d16h" · "3h5m" · "15m": relative()와 같은 정보를 띄어쓰기 없이. 폭이 모자랄 때만 쓴다. */
+function compactRelative(ms: number): string {
+	const minutes = Math.round(ms / 60_000);
+	if (minutes < 1) return "soon";
+	if (minutes < 60) return `${minutes}m`;
+	const hours = Math.floor(minutes / 60);
+	if (hours < 24) return minutes % 60 > 0 ? `${hours}h${minutes % 60}m` : `${hours}h`;
+	return hours % 24 > 0 ? `${Math.floor(hours / 24)}d${hours % 24}h` : `${Math.floor(hours / 24)}d`;
 }
 
-/** 참조 디자인의 꼬리: "88% left · resets …". 20% 미만이면 running out을 붙이되, 언제 돌아오는지 알 수 있게 리셋 시각은 지우지 않는다. */
-function usageTail(window: UsageWindow, now: number): string {
-	const details: string[] = [];
-	if (window.remainingPercent < LOW_PERCENT) details.push("running out");
-	const reset = formatReset(window.resetsAt, now);
-	if (reset.length > 0) details.push(reset);
-	return ` ${window.remainingPercent.toString().padStart(3)}% left${details.length > 0 ? ` · ${details.join(" · ")}` : ""}`;
+/** 리셋 표기를 긴 것부터: "resets 10/31 02:59 · in 6d 16h" → "… · 6d16h" → "resets 10/31 02:59". 지난 리셋은 "reset 07:59" 하나뿐이다. */
+function resetForms(resetsAt: number | null, now: number): string[] {
+	if (resetsAt === null) return [""];
+	const stamp = resetStamp(resetsAt, now);
+	const diff = resetsAt - now;
+	if (diff <= 0) return [`reset ${stamp}`];
+	return [`resets ${stamp} · ${relative(diff)}`, `resets ${stamp} · ${compactRelative(diff)}`, `resets ${stamp}`];
+}
+
+/**
+ * 참조 디자인의 꼬리: "88% left · resets …". 20% 미만이면 running out을 붙이되, 언제 돌아오는지 알 수 있게 리셋 시각은 지우지 않는다.
+ * max칸에 안 들면 …로 자르는 대신 상대 시간을 줄이고, 그다음 빼고, 마지막에 running out(빨강과 비율이 이미 말해 준다)을 뺀다.
+ */
+function usageTail(window: UsageWindow, now: number, max = Number.POSITIVE_INFINITY): string {
+	const head = ` ${window.remainingPercent.toString().padStart(3)}% left`;
+	const low = window.remainingPercent < LOW_PERCENT ? ["running out"] : [];
+	const resets = resetForms(window.resetsAt, now);
+	const variants = [...resets.map((reset) => [...low, reset]), [resets[resets.length - 1] ?? ""]].map((details) => {
+		const shown = details.filter((part) => part.length > 0);
+		return shown.length > 0 ? `${head} · ${shown.join(" · ")}` : head;
+	});
+	return variants.find((tail) => displayWidth(tail) <= max) ?? variants[variants.length - 1] ?? head;
 }
 
 function elapsed(ms: number): string {
@@ -342,6 +360,8 @@ export function renderFrame(state: AppState, cols: number): string[] {
 
 		row.windows.forEach((window: UsageWindow, index: number) => {
 			const shape = bar(window.remainingPercent, barWidth);
+			const note = index === 0 ? staleNote(row) : "";
+			const tailMax = width - displayWidth(MARKER) - (titleWidth + 1) - (windowWidth + 1) - (barWidth + 2) - displayWidth(note);
 			const color = stale ? DIM : levelColor(window.remainingPercent);
 			lines.push(
 				compose(
@@ -352,8 +372,8 @@ export function renderFrame(state: AppState, cols: number): string[] {
 						{ t: "▕" + shape.filled, c: color },
 						{ t: shape.empty, c: BAR_EMPTY },
 						{ t: "▏", c: color },
-						{ t: usageTail(window, state.now), c: color },
-						{ t: index === 0 ? staleNote(row) : "", c: YELLOW },
+						{ t: usageTail(window, state.now, tailMax), c: color },
+						{ t: note, c: YELLOW },
 					],
 					width,
 				),

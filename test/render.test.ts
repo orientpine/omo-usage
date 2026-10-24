@@ -182,6 +182,37 @@ describe("renderFrame", () => {
 		expect(bare).toContain(`error · rate limited (HTTP 429) · retry ${hm(retryAt)}`);
 	});
 
+	test("폭이 모자라면 리셋 꼬리를 줄여 자르지 않는다: 상대 시간을 6d16h로, 그래도 길면 상대 시간을, 마지막엔 running out을 댐다", () => {
+		const week = NOW + (6 * 24 + 16) * 3_600_000 + 5 * 60_000;
+		const rows = [
+			row({
+				label: "orientpine",
+				windows: [
+					{ label: "5h", kind: "session", remainingPercent: 68, resetsAt: NOW + 3 * 3_600_000 },
+					{ label: "7d", kind: "weekly", remainingPercent: 61, resetsAt: week },
+					{ label: "Fable", kind: "scoped", remainingPercent: 41, resetsAt: week },
+				],
+			}),
+			row({ slot: "c", label: "cbaekdong", windows: [{ label: "7d", kind: "weekly", remainingPercent: 0, resetsAt: NOW + 15 * 3_600_000 }] }),
+			row({ provider: "chatgpt-subscription", slot: "p", label: "personal", plan: "pro", windows: [{ label: "7d", kind: "weekly", remainingPercent: 99, resetsAt: week }] }),
+		];
+		const at = (cols: number) => renderFrame(state(rows), cols).map(strip);
+		for (const cols of [111, 83, 80, 72]) {
+			for (const line of at(cols)) {
+				expect(line).not.toContain("…");
+				expect(displayWidth(line)).toBeLessThanOrEqual(cols);
+			}
+		}
+		const wide = at(120).join("\n");
+		expect(wide).toMatch(/61% left · resets \d\d\/\d\d \d\d:\d\d · in 6d 16h/);
+		expect(wide).toContain("0% left · running out · resets");
+		const phone = at(83).join("\n");
+		expect(phone).toMatch(/61% left · resets \d\d\/\d\d \d\d:\d\d · 6d16h/);
+		expect(phone).toMatch(/0% left · (running out · )?resets (\d\d\/\d\d )?\d\d:\d\d/);
+		const narrow = at(72).join("\n");
+		expect(narrow).toMatch(/61% left · resets \d\d\/\d\d \d\d:\d\d$/m);
+	});
+
 	test("30분보다 오래된 값은 막대를 흐리게(회색) 그리고 갱신 시각 옆에 노란 stale을 단다", () => {
 		const lines = renderFrame(
 			state([
