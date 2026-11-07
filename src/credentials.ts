@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 
 /** senpi가 쓰는 자격증명 파일. 이 앱은 절대 여기에 쓰지 않는다 (읽기 전용). */
@@ -34,7 +35,7 @@ export function accountKey(provider: string, slot: string): string {
  * provider/slot -> 토큰 맵. 이 맵은 fetch 호출에서만 쓰이고
  * 화면 상태(AccountRow)에는 절대 들어가지 않는다.
  */
-export function secretsFrom(auth: unknown): Map<string, Secret> {
+export function secretsFrom(auth: unknown, claudeDir: string = CLAUDE_CLI_DIR): Map<string, Secret> {
 	const root = record(auth);
 	const secrets = new Map<string, Secret>();
 	if (!root) return secrets;
@@ -45,7 +46,7 @@ export function secretsFrom(auth: unknown): Map<string, Secret> {
 		const accounts = Array.isArray(entry["accounts"]) && entry["accounts"].length > 0 ? entry["accounts"] : [{ ...entry, name: "default" }];
 		for (const raw of accounts) {
 			const account = record(raw);
-			const access = account?.["access"];
+			const access = account?.["access"] ?? claudeCliAccess(account, claudeDir);
 			if (typeof access !== "string" || access.length === 0) continue;
 			const slot = typeof account?.["name"] === "string" && account["name"].length > 0 ? (account["name"] as string) : "default";
 			const explicitId = typeof entry["accountId"] === "string" ? (entry["accountId"] as string) : null;
@@ -53,6 +54,24 @@ export function secretsFrom(auth: unknown): Map<string, Secret> {
 		}
 	}
 	return secrets;
+}
+
+/**
+ * senpi가 store "claude-cli"로 로그인한 Claude 계정은 auth.json에 토큰이 없고
+ * ~/.omo/agent/anthropic-subscription-claude/<dirId>/.credentials.json (claudeAiOauth.accessToken)에 있다. 읽기만 한다.
+ */
+export const CLAUDE_CLI_DIR = `${homedir()}/.omo/agent/anthropic-subscription-claude`;
+
+function claudeCliAccess(account: Record<string, unknown> | null, claudeDir: string): string | undefined {
+	const dirId = account?.["dirId"];
+	if (account?.["store"] !== "claude-cli" || typeof dirId !== "string" || dirId.length === 0) return undefined;
+	try {
+		const file = JSON.parse(readFileSync(`${claudeDir}/${dirId}/.credentials.json`, "utf8"));
+		const token = record(record(file)?.["claudeAiOauth"])?.["accessToken"];
+		return typeof token === "string" ? token : undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 export async function readAuthFile(path: string = AUTH_PATH): Promise<unknown> {
