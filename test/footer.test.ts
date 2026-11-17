@@ -1,8 +1,8 @@
-import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { describe, expect, spyOn, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createFooterExtension, createUsagePoller, FOOTER_REFRESH_MS, renderFooter, sessionSlot, type ExtensionContextLike } from "../src/footer.ts";
+import { createFooterExtension, createUsagePoller, renderFooter, sessionSlot, type ExtensionContextLike } from "../src/footer.ts";
 import { displayWidth } from "../src/render.ts";
 import type { AccountRow, UsageWindow } from "../src/types.ts";
 
@@ -129,65 +129,51 @@ describe("sessionSlot", () => {
 });
 
 describe("createUsagePoller", () => {
-	test("300초마다 공유 캐시를 거쳐 조회하고, 429면 이전 막대를 지키며, retryAt 전에는 그 계정을 부르지 않는다", async () => {
-		let t = NOW;
-		let status = 200;
-		const calls: string[] = [];
-		const timers: { fn: () => void; ms: number }[] = [];
-		const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
-			const token = String(new Headers(init?.headers).get("authorization")).replace("Bearer ", "");
-			calls.push(`${token}@${t - NOW}`);
-			const limited = status === 429 && token === "tok-bob";
-			return new Response(JSON.stringify(limited ? { error: { type: "rate_limit_error" } } : OK_BODY), {
-				status: limited ? 429 : 200,
-				headers: limited ? { "retry-after": "600" } : {},
-			});
-		}) as unknown as typeof fetch;
+	test("reads only the shared cache, including on periodic refresh", async () => {
+		const path = join(mkdtempSync(join(tmpdir(), "omo-usage-test-")), "usage.json");
+		await Bun.write(path, JSON.stringify({ version: 1, accounts: { "anthropic-subscription/orientpine": { checkedAt: NOW, row: ROWS[0] } } }));
+		const timers: (() => void)[] = [];
+		const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(Response.json(OK_BODY));
 		const poller = createUsagePoller(() => {}, {
-			readAuth: async () => AUTH,
-			readPool: async () => null,
-			fetchImpl,
-			cachePath: join(mkdtempSync(join(tmpdir(), "omo-usage-test-")), "usage.json"),
-			intervalMs: FOOTER_REFRESH_MS,
-			now: () => t,
-			setTimer: (fn, ms) => {
-				timers.push({ fn, ms });
-				return timers.length;
-			},
+			readAuth: async () => ({ "anthropic-subscription": { accounts: [{ name: "orientpine", access: "fake", expires: future }] } }),
+			now: () => NOW,
+			cachePath: path,
+			setTimer: (fn) => timers.push(fn),
 			clearTimer: () => {},
 		});
-		const bob = () => poller.rows().find((r) => r.slot === "bob");
+		try {
+			poller.start();
+			await poller.refresh();
+			expect(poller.rows()[0]?.windows).toEqual(ROWS[0]?.windows ?? []);
+			timers[0]?.();
+			await poller.refresh();
+			expect(poller.rows()[0]?.slot).toBe("orientpine");
+			expect(fetchSpy).not.toHaveBeenCalled();
+		} finally {
+			poller.stop();
+			fetchSpy.mockRestore();
+		}
+	});
 
-		poller.start();
+	test("omits deleted cache accounts from pool cells and exceptions", async () => {
+		const path = join(mkdtempSync(join(tmpdir(), "omo-usage-test-")), "usage.json");
+		const cached = [
+			row({ slot: "alice", windows: [win("7d", 56)] }),
+			row({ slot: "deleted-slot", windows: [win("7d", 3)] }),
+		];
+		await Bun.write(path, JSON.stringify({ version: 1, accounts: Object.fromEntries(cached.map((row) => [
+			`${row.provider}/${row.slot}`, { checkedAt: NOW, row },
+		])) }));
+		const poller = createUsagePoller(() => {}, {
+			readAuth: async () => ({ "anthropic-subscription": { accounts: [AUTH["anthropic-subscription"].accounts[0]] } }),
+			now: () => NOW,
+			cachePath: path,
+		});
 		await poller.refresh();
-		expect(calls.sort()).toEqual(["tok-alice@0", "tok-bob@0"]);
-		const firstWindows = bob()?.windows;
-		expect(firstWindows?.length).toBe(2);
-
-		status = 429;
-		t = NOW + FOOTER_REFRESH_MS;
-		timers[0]?.fn();
-		await poller.refresh();
-		expect(bob()?.windows).toEqual(firstWindows ?? []);
-		expect(bob()?.retryAt).toBe(NOW + FOOTER_REFRESH_MS + 600_000);
-
-		status = 200;
-		calls.length = 0;
-		t = NOW + 2 * FOOTER_REFRESH_MS;
-		timers[1]?.fn();
-		await poller.refresh();
-		expect(calls).toEqual([`tok-alice@${2 * FOOTER_REFRESH_MS}`]);
-		expect(bob()?.windows).toEqual(firstWindows ?? []);
-
-		calls.length = 0;
-		t = NOW + 3 * FOOTER_REFRESH_MS;
-		timers[2]?.fn();
-		await poller.refresh();
-		expect(calls.sort()).toEqual([`tok-alice@${3 * FOOTER_REFRESH_MS}`, `tok-bob@${3 * FOOTER_REFRESH_MS}`]);
-		expect(bob()?.retryAt).toBeUndefined();
-
-		expect(timers.map((timer) => timer.ms)).toEqual([FOOTER_REFRESH_MS, FOOTER_REFRESH_MS, FOOTER_REFRESH_MS, FOOTER_REFRESH_MS]);
-		poller.stop();
+		expect(poller.rows().map((row) => row.slot)).toEqual(["alice"]);
+		expect(strip(renderFooter(poller.rows(), { provider: "anthropic-subscription", slot: null }, 120, NOW))).toBe("Claude │ pool ▅");
+		const codex = row({ provider: "chatgpt-subscription", windows: [win("7d", 80)] });
+		expect(strip(renderFooter([...poller.rows(), codex], { provider: codex.provider, slot: null }, 120, NOW))).toBe("Codex │ pool ▇");
 	});
 });
 
@@ -201,20 +187,21 @@ describe("createFooterExtension", () => {
 
 	function setup(setWidget: SetWidget | undefined, cols = { value: 120 }) {
 		const handlers = new Map<string, (event: unknown, ctx: ExtensionContextLike) => unknown>();
-		let fetches = 0;
 		let resize: () => void = () => {};
 		let unsubscribed = false;
-		const fetchImpl = (async () => {
-			fetches++;
-			return new Response(JSON.stringify(OK_BODY), { status: 200 });
-		}) as unknown as typeof fetch;
+		let authReads = 0;
+		let timers = 0;
+
+		const path = join(mkdtempSync(join(tmpdir(), "omo-usage-test-")), "usage.json");
+		writeFileSync(path, JSON.stringify({ version: 1, accounts: Object.fromEntries(["alice", "bob"].map((slot) => [`anthropic-subscription/${slot}`, { checkedAt: NOW, row: row({ slot, label: slot, windows: [win("5h", 84), win("7d", 56, NOW + 86400000)] }) }])) }));
 		const extension = createFooterExtension({
-			readAuth: async () => AUTH,
-			readPool: async () => null,
-			fetchImpl,
-			cachePath: join(mkdtempSync(join(tmpdir(), "omo-usage-test-")), "usage.json"),
+			readAuth: async () => {
+				authReads++;
+				return AUTH;
+			},
+			cachePath: path,
 			now: () => NOW,
-			setTimer: () => 0,
+			setTimer: () => ++timers,
 			clearTimer: () => {},
 			columns: () => cols.value,
 			onResize: (listener) => {
@@ -232,7 +219,7 @@ describe("createFooterExtension", () => {
 			sessionManager: { getSessionId: () => "session-1" },
 			ui: { setWidget, notify: () => {} },
 		};
-		return { handlers, ctx, fetches: () => fetches, resize: () => resize(), unsubscribed: () => unsubscribed };
+		return { handlers, ctx, resize: () => resize(), unsubscribed: () => unsubscribed, authReads: () => authReads, timers: () => timers };
 	}
 
 	/** 조회가 끝나 첫 줄이 그려지는 그 setWidget 호출 자체를 기다린다 (시간 대기 없이). */
@@ -276,11 +263,12 @@ describe("createFooterExtension", () => {
 	});
 
 	test("setWidget이 없으면 아무것도 그리지 않고 조회도 하지 않는다", async () => {
-		const { handlers, ctx, fetches } = setup(undefined);
+		const { handlers, ctx, authReads, timers } = setup(undefined);
 		await handlers.get("session_start")?.({ reason: "startup" }, ctx);
 		await handlers.get("model_select")?.({}, ctx);
 		await handlers.get("session_shutdown")?.({ reason: "quit" }, ctx);
-		expect(fetches()).toBe(0);
+		expect(authReads()).toBe(0);
+		expect(timers()).toBe(0);
 	});
 
 	test("setWidget이 던지면 조용히 빠진다: 예외를 올리지 않고 다시 그리지도 않는다", async () => {

@@ -76,15 +76,17 @@ Updating is the same command again. To remove it: `bun remove -g @orientpine/omo
 
 It opens senpi's auth and pool files and, for Claude CLI slots, their credential files, without writing to them. Token refresh and account selection remain with senpi and Claude CLI, so leaving omo-usage running changes nothing about how they behave. The in-use marker comes from one local file, so that is re-read every 5 seconds.
 
-**One fetch per account for the whole machine.** Every omo-usage process (each omo session's footer line, the TUI, `--once`, `--json`) shares one cache file, `~/.cache/omo-usage/usage.json` (mode 0600, no tokens; `$XDG_CACHE_HOME` and `OMO_USAGE_CACHE_DIR` move it). An account is really fetched only when its entry is older than **10 minutes** (`OMO_USAGE_REFRESH_SECONDS`, never below the 120-second 429 cooldown), and a lock file makes sure only one process fetches at a time while the others wait and read its result (a lock whose owner died or that is older than 45 s is released). After a 429 no process calls that account before its retry time. Usage is therefore not real-time: each account shows `updated HH:MM`, the time of its last successful fetch.
+**One fetch per account for the whole machine.** The TUI, `--once`, and `--json` share one cache file, `~/.cache/omo-usage/usage.json` (mode 0600, no tokens; `$XDG_CACHE_HOME` and `OMO_USAGE_CACHE_DIR` move it). The shared collector normally reuses entries younger than **10 minutes** (`OMO_USAGE_REFRESH_SECONDS`, never below the 120-second 429 cooldown); explicit CLI/TUI requests bypass that age, subject to the cooldown and reset rules below. A lock file makes sure only one process fetches at a time while the others wait and read its result (a lock whose owner died or that is older than 45 s is released). After a 429 no process calls that account before its retry time. Usage is therefore not real-time: each account shows `updated HH:MM`, the time of its last successful fetch.
 
-Opening the TUI, pressing `r`, or explicitly running `--once`/`--json` requests fresh values regardless of that 10-minute age, but never bypasses the 120-second cooldown, a valid `Retry-After`, or an exhausted account. `Retry-After` is read as integer seconds or a real HTTP-date; a missing or invalid value does not invent `retryAt`, while `checkedAt` still enforces the local 120-second cooldown. A successful 0% window with a real future reset suppresses every further usage request for that account until that reset, even when forced; an unknown or past reset allows a fresh request. A cached retry time later than every known reset is treated as corrupt, malformed cached dates and percentages are discarded at the file boundary, and retry timers are bounded.
+Opening the TUI, pressing `r`, or explicitly running `--once`/`--json` requests fresh values regardless of that 10-minute age, but never bypasses the 120-second cooldown, a valid `Retry-After`, or an exhausted account. `Retry-After` is read as integer seconds or a real HTTP-date; a missing or invalid value does not invent `retryAt`, while `checkedAt` still enforces the local 120-second cooldown. A successful 0% window with a real future reset suppresses every further usage request for that account until that reset, even when forced; an unknown or past reset allows a fresh request. A cached retry time later than every known reset is treated as corrupt, malformed cached dates and percentages are discarded at the file boundary, and no automatic retry is scheduled.
 
 ## Usage
 
+Usage requests require an explicit action: CLI invocation, TUI startup, or `r`. No periodic usage requests or automatic 429 retries run. Retry times remain visible; press `r` after the cooldown. The footer only reads the shared local cache and never fetches usage, including when that cache is missing or stale. `src/tui.ts` keeps only display ticks and the 5-second local pool-state reread.
+
 Claude accounts with `store: "claude-cli"` are resolved from
 `~/.omo/agent/anthropic-subscription-claude/<dirId>/.credentials.json`
-(`claudeAiOauth.accessToken` / `expiresAt`). CLI, TUI, and footer share this
+(`claudeAiOauth.accessToken` / `expiresAt`). CLI and TUI share this
 read-only reader; legacy inline OAuth accounts still work. Invalid directory IDs,
 symlinked account directories or credential files, malformed files, and managed
 sentinels are refused. Expired tokens are never sent and no tokens are refreshed.
@@ -92,12 +94,11 @@ On macOS, a CLI account stored only in Keychain has no readable file token.
 When a readable token becomes available, a cached local `no access token` error is
 replaced immediately under the shared fetch lock. Actual API errors still honor
 their cooldown and `Retry-After`; existing successful usage remains shared.
-Sessions that loaded an older reader need the official `/reload` command to use
-the updated extension without ending the session.
+Restart an open omo-usage TUI after updating to load the new reader.
 
 | Command | What it does |
 | --- | --- |
-| `omo-usage` | TUI. Usage refreshes every 150 s, the in-use marker (`▶`) every 5 s. `r` refreshes now, `q` / `Ctrl-C` quits |
+| `omo-usage` | TUI. Usage is requested only on startup and `r`; the local in-use marker (`▶`) refreshes every 5 s. `r` requests fresh usage, `q` / `Ctrl-C` quits |
 | `omo-usage --once` | Request fresh values, print one line per row, exit (cooldowns and exhausted resets still apply) |
 | `omo-usage --json` | The same result as JSON (no tokens) |
 | `omo-usage --help` | Help |
@@ -106,7 +107,7 @@ the updated extension without ending the session.
 ### How to read the screen
 
 - **One account = one block.** The first line carries the account name after `●` (Codex adds the plan, `(pro)`/`(team)`; a slot pinned by auth.json gets `(pinned)`), and the windows below it are tied together by `│`.
-- **The account being drained right now is `▶`.** If senpi completed a request on that account within the last 10 minutes, the marker turns into a green `▶` and the block ends with `in use · just now`. Anything older stays `●` with a dim `last used 3h ago`. senpi picks an account per session, so there can be more than one `▶`. senpi keeps no such record for Codex, xAI and kimi-coding, so the TUI compares the previous fetch against the current one and writes the drop as `in use · -3% since poll 2m ago` — different evidence, so different wording (it is not an exact timestamp but somewhere inside the 150-second fetch interval, and since Codex reports whole percents anything below 1 pp goes unnoticed). Once it goes stale: `last drain seen 25m ago`. `--once`/`--json` have no previous fetch, so they show none of this. google has no usage API at all.
+- **The account being drained right now is `▶`.** If senpi completed a request on that account within the last 10 minutes, the marker turns into a green `▶` and the block ends with `in use · just now`. Anything older stays `●` with a dim `last used 3h ago`. senpi picks an account per session, so there can be more than one `▶`. senpi keeps no such record for Codex, xAI and kimi-coding, so the TUI compares the previous fetch against the current one and writes the drop as `in use · -3% since poll 2m ago` — different evidence, so different wording (it is not an exact timestamp but somewhere between explicit refreshes, and since Codex reports whole percents anything below 1 pp goes unnoticed). Once it goes stale: `last drain seen 25m ago`. `--once`/`--json` have no previous fetch, so they show none of this. google has no usage API at all.
 - **The bar and the percentage are what is left.** Each window reads `5h ▕████████████░░▏  88% left · …` — a fixed 14-cell bar, the same style as [asmond-lab/omo-usage](https://github.com/asmond-lab/omo-usage). 100% means nothing used yet. Green > 50% · amber 20–50% · red < 20%, and red adds `running out`.
 - **Window names**: `5h` session, `7d` weekly, and a model name such as `Fable` means that model's weekly limit.
 - **Reset times** read `resets 16:00` when they fall today, otherwise `resets 09/22 14:00`, followed by a relative time like `in 2h`. They stay on red lines too, so you can see when a drained window comes back. When the terminal is too narrow for the whole tail, it is shortened instead of cut off with `…`: first the relative time becomes `6d16h`, then `running out` goes (the red color and the percentage already say it), and last the relative time is dropped (the date and time stay). A drained window keeps its countdown as long as any other line does.
@@ -193,7 +194,7 @@ Claude·orientpine ▕███████████░░░▏ 76% 7d · re
 - **③ exceptions**: other providers stay hidden unless one is red (< 20%) or needs a re-login; then the first one shows, the rest as `+N`.
 - **Narrow terminals** drop ③, then ②, then the reset time, then shorten the bar, and finally cut with `…`. The line never wraps.
 - **Which account is "this session's"?** The same one omo's own footer names as `(provider@slot)`. senpi has no API that returns it, so the line recomputes it with senpi's own rule: the pinned slot if there is one, otherwise the slot that wins the session-id rendezvous hash (the hash senpi uses to pick an account per session). Only slot names and the session id are used, never a token. If the session id is unavailable it does not guess: ① shows just the provider and ② lists every account.
-- **Refresh**: the line re-reads the shared cache every **5 minutes**; the actual usage call happens at most once per account per 10 minutes for the whole machine, however many omo sessions are open. A 429 keeps the previous values unchanged. Switching models (`/model`, Ctrl+P) or the end of a reply only re-matches the account; it does not fetch.
+- **Refresh**: the line re-reads only the local shared cache and current account roster every **5 minutes**. It never requests usage, even when the cache is empty or stale, and ignores cached accounts removed from the roster. Switching models (`/model`, Ctrl+P) or the end of a reply only re-matches the account; it does not fetch.
 
 > [!NOTE]
 > The line uses only senpi's official extension API, `ctx.ui.setWidget(key, [line], { placement: "belowEditor" })` - no patching of omo's internals (`setStatus` would share one line with every other extension, `setFooter` would replace the whole footer). If a host has no `setWidget` or it fails, the line simply does not appear.
@@ -201,7 +202,7 @@ Claude·orientpine ▕███████████░░░▏ 76% 7d · re
 ## FAQ
 
 **Can I tell which account senpi is spending right now?**
-The one marked `▶`. Every time a request succeeds, senpi writes that slot's `lastSuccessAt` into `~/.omo/agent/credential-pool-state.json`, and omo-usage marks every slot newer than 10 minutes as in use. The TUI re-reads only that file every 5 seconds, so it keeps up regardless of the 150-second usage fetch interval. There is a reason it refuses to declare "this one account": senpi picks an account per session by hash (preferring a pinned account when one exists), so with several sessions several accounts are drained at once. Hence more than one `▶` is possible, and the `just now` / `3m ago` next to it is what you judge by. senpi keeps no such record for Codex, xAI and kimi-coding (`stored/slots` is empty for `chatgpt-subscription` and `kimi-coding`, and xai has no entry at all). For those three the TUI substitutes a comparison of remaining values between fetches — if the remainder dropped, `▶ … in use · -3% since poll 2m ago`. That is not an exact timestamp but somewhere inside the 150-second fetch interval, and a rise caused by a reset does not count as drain. google has no usage API.
+The one marked `▶`. Every time a request succeeds, senpi writes that slot's `lastSuccessAt` into `~/.omo/agent/credential-pool-state.json`, and omo-usage marks every slot newer than 10 minutes as in use. The TUI re-reads only that file every 5 seconds, so it keeps up without making a usage request. There is a reason it refuses to declare "this one account": senpi picks an account per session by hash (preferring a pinned account when one exists), so with several sessions several accounts are drained at once. Hence more than one `▶` is possible, and the `just now` / `3m ago` next to it is what you judge by. senpi keeps no such record for Codex, xAI and kimi-coding (`stored/slots` is empty for `chatgpt-subscription` and `kimi-coding`, and xai has no entry at all). For those three the TUI substitutes a comparison of remaining values between fetches — if the remainder dropped, `▶ … in use · -3% since poll 2m ago`. That is not an exact timestamp but somewhere between explicit refreshes, and a rise caused by a reset does not count as drain. google has no usage API.
 
 **It says expired — do I have to log in again?**
 Usually not. An expired access token is normal; senpi or Claude CLI can renew it when the account is next used. omo-usage reads auth.json and Claude CLI credential files without refreshing them (refreshing directly could rotate a token owned by another process), so it shows the expiry as it is. Re-login is needed when `refresh failed` is attached; run `/login anthropic-subscription` in the omo TUI and enter the existing slot name at the name prompt, which replaces it in place.
@@ -265,7 +266,7 @@ bun run src/main.ts   # run locally (= bin/omo-usage.ts)
 ```
 src/
   main.ts         CLI entry: --once / --json / --help, otherwise the TUI
-  tui.ts          alternate screen, key input, 150 s cache re-read ([r] forces a fetch), 5 s pool-state refresh, 429 retry scheduling
+  tui.ts          alternate screen, startup/[r] requests, display ticks and 5 s local pool reread
   cache.ts        machine-wide cache file + lock: fetch only stale accounts, once, in one process
   collect.ts      per-provider fetch, 429 cooldown, drop detection against the previous fetch
   senpi.ts        senpi's subscription-usage.json -> the Claude readings senpi already fetched (read only)
@@ -274,7 +275,7 @@ src/
   pool.ts         credential-pool-state.json -> last drain time per slot (the in-use marker)
   credentials.ts  token map (kept apart from the screen state)
   render.ts       frame rendering: width math, color, the ● / ▶ / │ guides
-  footer.ts       omo footer line (① account · ② pool · ③ exceptions), 5-minute cache poller, senpi extension wiring
+  footer.ts       omo footer line (① account · ② pool · ③ exceptions), 5-minute local cache reader, senpi extension wiring
   types.ts        AccountRow, UsageWindow
 extension/
   index.js        senpi extension entry (official setWidget API only -> src/footer.ts)

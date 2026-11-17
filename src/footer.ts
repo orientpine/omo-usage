@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import type { AccountRow, UsageWindow } from "./types.ts";
-import { collectShared } from "./cache.ts";
-import { readAuthFile } from "./credentials.ts";
-import { readPoolState } from "./pool.ts";
+import { cachePath, readCache } from "./cache.ts";
+import { buildRoster } from "./auth.ts";
+import { accountKey, readAuthFile } from "./credentials.ts";
 import { BAR_CELLS, BAR_EMPTY, LEVEL_RED, compose, displayWidth, isStale, levelColor, resetStamp, type Part } from "./render.ts";
 
-/** 공유 캐시를 다시 읽는 주기 (2026-10-01). 실제 조회는 머신 전체에서 계정당 간격(기본 10분)마다 한 번만 한다 (cache.ts, 2026-10-08). */
+/** 로컬 공유 캐시만 다시 읽는다. footer는 서버에 요청하지 않는다. */
 export const FOOTER_REFRESH_MS = 300_000;
 const WIDGET_KEY = "omo-usage";
 /**
@@ -126,11 +126,8 @@ export function renderFooter(rows: readonly AccountRow[], focus: FooterFocus, co
 
 export interface PollerDeps {
 	readonly readAuth?: () => Promise<unknown>;
-	readonly readPool?: () => Promise<unknown>;
-	readonly fetchImpl?: typeof fetch;
-	/** 공유 캐시 파일과 계정당 조회 간격. 기본은 cache.ts의 cachePath()·refreshIntervalMs(). */
+	/** 읽기 전용 공유 캐시 파일. */
 	readonly cachePath?: string;
-	readonly intervalMs?: number;
 	readonly now?: () => number;
 	readonly setTimer?: (fn: () => void, ms: number) => unknown;
 	readonly clearTimer?: (handle: unknown) => void;
@@ -153,12 +150,10 @@ function realTimer(fn: () => void, ms: number): unknown {
 }
 
 /**
- * FOOTER_REFRESH_MS마다 공유 캐시를 거쳐 사용량을 읽는다. 오래된 계정만 잠금을 쥐어 조회하고, retryAt 전인 계정은
- * 어느 프로세스도 부르지 않으며, 429면 이전 막대를 지우지 않고 retryAt만 덧붙인다.
+ * FOOTER_REFRESH_MS마다 로컬 공유 캐시만 읽는다. 캐시가 없거나 오래돼도 서버에는 요청하지 않는다.
  */
 export function createUsagePoller(onRows: (rows: readonly AccountRow[]) => void, deps: PollerDeps = {}): UsagePoller {
 	const readAuth = deps.readAuth ?? (() => readAuthFile());
-	const readPool = deps.readPool ?? (() => readPoolState());
 	const now = deps.now ?? Date.now;
 	const setTimer = deps.setTimer ?? realTimer;
 	const clearTimer = deps.clearTimer ?? ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
@@ -171,14 +166,9 @@ export function createUsagePoller(onRows: (rows: readonly AccountRow[]) => void,
 		if (inflight) return inflight;
 		inflight = (async () => {
 			try {
-				const [auth, poolState] = await Promise.all([readAuth(), readPool()]);
-				rows = await collectShared(auth, {
-					now: now(),
-					poolState,
-					...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
-					...(deps.cachePath ? { cachePath: deps.cachePath } : {}),
-					...(deps.intervalMs ? { intervalMs: deps.intervalMs } : {}),
-				});
+				const [auth, cache] = await Promise.all([readAuth(), readCache(deps.cachePath ?? cachePath())]);
+				const current = new Set(buildRoster(auth, now()).map((row) => accountKey(row.provider, row.slot)));
+				rows = [...cache.values()].map((entry) => entry.row).filter((row) => current.has(accountKey(row.provider, row.slot)));
 				if (running) onRows(rows);
 			} catch (error) {
 				deps.onError?.(error instanceof Error ? error.message : String(error));
