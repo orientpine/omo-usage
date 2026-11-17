@@ -15,6 +15,8 @@ const CLEAR_BELOW = "\u001B[J";
 /** 공유 캐시를 다시 읽는 주기. 실제 조회는 계정 항목이 간격(기본 10분)보다 오래됐을 때만 일어난다 (cache.ts). */
 const AUTO_REFRESH_MS = 150_000;
 const TICK_MS = 1_000;
+/** Node/Bun의 최대 타이머 지연. 잘못된 미래 retryAt이 있어도 Infinity·overflow 타이머를 만들지 않는다. */
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 /** 어느 계정이 차감 중인지는 로컬 파일 하나로 알 수 있으니, 사용량 조회와 따로 짧게 돌린다. */
 const POOL_TICK_MS = 5_000;
 
@@ -42,7 +44,7 @@ export async function runTui(): Promise<void> {
 	// 파이프로 넘길 때는 TUI 대신 한 번만 출력한다.
 	if (!process.stdout.isTTY) {
 		const [auth, poolState] = await Promise.all([readAuthFile(), readPoolState()]);
-		state.rows = await collectShared(auth, { poolState });
+		state.rows = await collectShared(auth, { poolState, force: true });
 		for (const line of renderFrame({ ...snapshot(state), updatedAt: Date.now() }, process.stdout.columns ?? 100)) console.log(line);
 		return;
 	}
@@ -55,9 +57,10 @@ export async function runTui(): Promise<void> {
 		if (retryTimer) clearTimeout(retryTimer);
 		retryTimer = null;
 		const now = Date.now();
-		const pending = state.rows.map((row) => row.retryAt ?? 0).filter((at) => at > now);
+		const pending = state.rows.map((row) => row.retryAt ?? 0).filter((at) => Number.isFinite(at) && at > now);
 		if (pending.length === 0) return;
-		retryTimer = setTimeout(() => void refresh(), Math.min(...pending) - now + 1_000);
+		const delay = Math.min(...pending) - now + 1_000;
+		retryTimer = setTimeout(() => void refresh(), Math.min(delay, MAX_TIMER_DELAY_MS));
 	};
 
 	/** force = [r]: 간격은 무시하지만 쿨다운과 retryAt은 지킨다. */
@@ -128,5 +131,5 @@ export async function runTui(): Promise<void> {
 	process.on("SIGTERM", () => quit(0));
 
 	draw(state);
-	await refresh();
+	await refresh(true);
 }

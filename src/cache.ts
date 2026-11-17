@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { AccountRow } from "./types.ts";
+import type { AccountRow, UsageWindow } from "./types.ts";
 import { buildRoster } from "./auth.ts";
-import { collectUsage, RATE_LIMIT_COOLDOWN_MS, type CollectOptions } from "./collect.ts";
-import { accountKey } from "./credentials.ts";
+import { collectUsage, exhaustedResetAt, RATE_LIMIT_COOLDOWN_MS, validFutureRetryAt, type CollectOptions } from "./collect.ts";
+import { accountKey, secretsFrom } from "./credentials.ts";
 import { readSenpiUsage, scopedSlug, senpiUsagePath, type SenpiReading } from "./senpi.ts";
 
 /**
@@ -43,6 +43,22 @@ function record(value: unknown): Record<string, unknown> | null {
 	return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
+function cachedWindow(value: unknown): UsageWindow | null {
+	const window = record(value);
+	if (!window) return null;
+	const label = window["label"];
+	const kind = window?.["kind"];
+	const remaining = window?.["remainingPercent"];
+	if (typeof label !== "string" || (kind !== "session" && kind !== "weekly" && kind !== "scoped" && kind !== "other")) return null;
+	if (typeof remaining !== "number" || !Number.isFinite(remaining) || remaining < 0 || remaining > 100) return null;
+	const reset = window["resetsAt"];
+	return { label, kind, remainingPercent: remaining, resetsAt: typeof reset === "number" && Number.isFinite(reset) ? reset : null };
+}
+
+function cachedTimestamp(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 /** 파일이 없거나 깨졌으면 빈 캐시. 모양이 맞지 않는 항목은 버린다. */
 export async function readCache(path: string): Promise<Map<string, CacheEntry>> {
 	const entries = new Map<string, CacheEntry>();
@@ -60,9 +76,40 @@ export async function readCache(path: string): Promise<Map<string, CacheEntry>> 
 		const row = record(entry?.["row"]);
 		const checkedAt = entry?.["checkedAt"];
 		if (!row || typeof checkedAt !== "number" || !Number.isFinite(checkedAt)) continue;
-		if (typeof row["provider"] !== "string" || typeof row["slot"] !== "string" || !Array.isArray(row["windows"])) continue;
-		if (accountKey(row["provider"], row["slot"]) !== key) continue;
-		entries.set(key, { checkedAt, row: row as unknown as AccountRow });
+		const provider = row["provider"];
+		const slot = row["slot"];
+		const label = row["label"];
+		const status = row["status"];
+		if (typeof provider !== "string" || typeof slot !== "string" || !Array.isArray(row["windows"])) continue;
+		if (status !== "ok" && status !== "expired" && status !== "error" && status !== "unsupported" && status !== "loading") continue;
+		if (accountKey(provider, slot) !== key) continue;
+		const windows = row["windows"].flatMap((value) => {
+			const window = cachedWindow(value);
+			return window === null ? [] : [window];
+		});
+		const fetchedAt = cachedTimestamp(row["fetchedAt"]);
+		const retryAt = cachedTimestamp(row["retryAt"]);
+		const lastUsedAt = cachedTimestamp(row["lastUsedAt"]);
+		const note = row["note"];
+		const drained = record(row["drained"]);
+		const drainedAt = cachedTimestamp(drained?.["at"]);
+		const drainedPercent = cachedTimestamp(drained?.["percent"]);
+		entries.set(key, { checkedAt, row: {
+			provider,
+			slot,
+			label: typeof label === "string" ? label : slot,
+			status,
+			detail: typeof row["detail"] === "string" ? row["detail"] : null,
+			plan: typeof row["plan"] === "string" ? row["plan"] : null,
+			expiresAt: cachedTimestamp(row["expiresAt"]) ?? null,
+			windows,
+			...(fetchedAt !== undefined ? { fetchedAt } : {}),
+			...(retryAt !== undefined ? { retryAt } : {}),
+			...(typeof note === "string" ? { note } : {}),
+			...(lastUsedAt !== undefined ? { lastUsedAt } : {}),
+			...(row["pinned"] === true ? { pinned: true as const } : {}),
+			...(drainedAt !== undefined && drainedPercent !== undefined ? { drained: { at: drainedAt, percent: drainedPercent } } : {}),
+		} });
 	}
 	return entries;
 }
@@ -85,7 +132,7 @@ function pidAlive(pid: number): boolean {
 		process.kill(pid, 0);
 		return true;
 	} catch (error) {
-		return (error as NodeJS.ErrnoException).code === "EPERM";
+		return error instanceof Error && "code" in error && error.code === "EPERM";
 	}
 }
 
@@ -99,9 +146,10 @@ async function lockIsStale(path: string, now: number): Promise<boolean> {
 	}
 	const lock = record((() => {
 		try {
-			return JSON.parse(text) as unknown;
-		} catch {
-			return null;
+			return JSON.parse(text);
+		} catch (error) {
+			if (error instanceof SyntaxError) return null;
+			throw error;
 		}
 	})());
 	const pid = lock?.["pid"];
@@ -146,7 +194,8 @@ async function releaseLock(path: string, token: string): Promise<void> {
  */
 export function isDue(entry: CacheEntry | undefined, now: number, intervalMs: number, force: boolean): boolean {
 	if (entry === undefined) return true;
-	if (entry.row.retryAt !== undefined && entry.row.retryAt > now) return false;
+	if (exhaustedResetAt(entry.row, now) !== undefined) return false;
+	if (validFutureRetryAt(entry.row, now) !== undefined) return false;
 	const age = now - entry.checkedAt;
 	if (age < 0) return true;
 	if (age < RATE_LIMIT_COOLDOWN_MS) return false;
@@ -196,6 +245,7 @@ export async function collectShared(auth: unknown, options: SharedOptions = {}):
 			.map((row) => [accountKey(row.provider, row.slot), row] as const),
 	);
 	const keys = [...roster.keys()];
+	const authenticated = new Set(secretsFrom(auth).keys());
 	const senpi = await readSenpiUsage(options.senpiUsagePath ?? senpiUsagePath());
 	/** 캐시보다 새로운 senpi 값. 간격 안이면 그 계정은 부르지 않는다 — 같은 토큰으로 또 부르면 senpi 직후 429 창에 걸릴 뿐이다. */
 	const newer = (cache: ReadonlyMap<string, CacheEntry>, key: string): SenpiReading | undefined => {
@@ -208,7 +258,13 @@ export async function collectShared(auth: unknown, options: SharedOptions = {}):
 		return reading !== undefined && now - reading.fetchedAt < intervalMs;
 	};
 	const dueIn = (cache: ReadonlyMap<string, CacheEntry>): Set<string> =>
-		new Set(keys.filter((key) => !covered(cache, key) && isDue(cache.get(key), now, intervalMs, options.force === true)));
+		new Set(keys.filter((key) => {
+			if (covered(cache, key)) return false;
+			const entry = cache.get(key);
+			// 로컬 토큰 부재는 API 실패가 아니다. 인증 회복이나 옛 footer의 오류 재기록을 쿨다운으로 가리지 않는다.
+			if (entry?.row.status === "error" && entry.row.detail === "no access token" && authenticated.has(key)) return true;
+			return isDue(entry, now, intervalMs, options.force === true);
+		}));
 	const previousOf = (cache: ReadonlyMap<string, CacheEntry>): AccountRow[] => {
 		const rows = new Map([...cache].map(([key, entry]) => [key, entry.row]));
 		for (const key of keys) {

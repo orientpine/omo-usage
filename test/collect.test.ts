@@ -21,13 +21,16 @@ const AUTH = {
 const OK_BODY = { five_hour: { utilization: 16, resets_at: "2026-09-18T09:00:00Z" }, seven_day: { utilization: 44, resets_at: "2026-09-22T00:00:00Z" } };
 const LIMITED_BODY = { error: { type: "rate_limit_error", message: "Rate limited. Please try again later." } };
 
-function fakeFetch(byToken: Record<string, number>): { fetchImpl: typeof fetch; calls: string[] } {
+function fakeFetch(byToken: Record<string, number>, retryAfter?: string): { fetchImpl: typeof fetch; calls: string[] } {
 	const calls: string[] = [];
 	const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
 		const token = String(new Headers(init?.headers).get("authorization")).replace("Bearer ", "");
 		calls.push(token);
 		const status = byToken[token] ?? 200;
-		return new Response(JSON.stringify(status === 200 ? OK_BODY : LIMITED_BODY), { status, headers: { "content-type": "application/json" } });
+		return new Response(JSON.stringify(status === 200 ? OK_BODY : LIMITED_BODY), {
+			status,
+			headers: { "content-type": "application/json", ...(status === 429 && retryAfter !== undefined ? { "retry-after": retryAfter } : {}) },
+		});
 	}) as unknown as typeof fetch;
 	return { fetchImpl, calls };
 }
@@ -39,18 +42,18 @@ function find(rows: AccountRow[], slot: string): AccountRow {
 }
 
 describe("collectUsage · 429 처리", () => {
-	test("첫 조회에서 429면 막대 없이 재시도 시각을 보여준다", async () => {
+	test("첫 조회 429에 Retry-After가 없으면 재시도 시각을 지어내지 않는다", async () => {
 		const { fetchImpl } = fakeFetch({ "tok-bob": 429 });
 		const rows = await collectUsage(AUTH, { fetchImpl, now: NOW });
 		const bob = find(rows, "bob");
 		expect(bob.status).toBe("error");
 		expect(bob.windows).toEqual([]);
 		expect(bob.detail).toContain("rate limited");
-		expect(bob.retryAt).toBe(NOW + RATE_LIMIT_COOLDOWN_MS);
+		expect(bob.retryAt).toBeUndefined();
 		expect(find(rows, "default").status).toBe("ok");
 	});
 
-	test("이전 값이 있으면 429여도 막대와 마지막 성공 시각을 그대로 두고 재시도 시각만 붙인다 (오류 문구 없음)", async () => {
+	test("이전 값이 있으면 429여도 막대와 마지막 성공 시각을 지키고 서버 재시도 값이 없으면 retryAt도 없앤다", async () => {
 		const first = await collectUsage(AUTH, { fetchImpl: fakeFetch({}).fetchImpl, now: NOW });
 		const { fetchImpl } = fakeFetch({ "tok-bob": 429 });
 		const rows = await collectUsage(AUTH, { fetchImpl, now: NOW + 60_000, previous: first });
@@ -59,21 +62,21 @@ describe("collectUsage · 429 처리", () => {
 		expect(bob.windows).toEqual(find(first, "bob").windows);
 		expect(bob.detail).toBeNull();
 		expect(bob.fetchedAt).toBe(NOW);
-		expect(bob.retryAt).toBe(NOW + 60_000 + RATE_LIMIT_COOLDOWN_MS);
+		expect(bob.retryAt).toBeUndefined();
 	});
 
 	test("재시도 시각 전에는 그 계정을 아예 호출하지 않고 이전 줄을 그대로 돌려준다", async () => {
-		const limited = await collectUsage(AUTH, { fetchImpl: fakeFetch({ "tok-bob": 429 }).fetchImpl, now: NOW });
+		const limited = await collectUsage(AUTH, { fetchImpl: fakeFetch({ "tok-bob": 429 }, "120").fetchImpl, now: NOW });
 		const { fetchImpl, calls } = fakeFetch({});
 		const rows = await collectUsage(AUTH, { fetchImpl, now: NOW + 1_000, previous: limited });
 		expect(calls).toEqual(["tok-alice"]);
 		expect(find(rows, "bob")).toEqual(find(limited, "bob"));
 	});
 
-	test("재시도 시각이 지나면 다시 호출하고 성공하면 사유와 재시도 시각을 지운다", async () => {
-		const limited = await collectUsage(AUTH, { fetchImpl: fakeFetch({ "tok-bob": 429 }).fetchImpl, now: NOW });
+	test("지난 재시도 시각은 다시 호출하고 성공하면 사유와 재시도 시각을 지운다", async () => {
+		const limited = await collectUsage(AUTH, { fetchImpl: fakeFetch({ "tok-bob": 429 }, "120").fetchImpl, now: NOW });
 		const { fetchImpl, calls } = fakeFetch({});
-		const rows = await collectUsage(AUTH, { fetchImpl, now: NOW + RATE_LIMIT_COOLDOWN_MS, previous: limited });
+		const rows = await collectUsage(AUTH, { fetchImpl, now: NOW + RATE_LIMIT_COOLDOWN_MS + 1, previous: limited });
 		expect(calls.sort()).toEqual(["tok-alice", "tok-bob"]);
 		const bob = find(rows, "bob");
 		expect(bob.status).toBe("ok");
@@ -81,10 +84,32 @@ describe("collectUsage · 429 처리", () => {
 		expect(bob.retryAt).toBeUndefined();
 	});
 
-	test("Retry-After 헤더가 양수면 그 값을 쿨다운으로 쓴다", async () => {
+	test("Retry-After 헤더가 양수 초면 그 값을 재시도 시각으로 쓴다", async () => {
 		const fetchImpl = (async () => new Response(JSON.stringify(LIMITED_BODY), { status: 429, headers: { "retry-after": "90" } })) as unknown as typeof fetch;
 		const rows = await collectUsage(AUTH, { fetchImpl, now: NOW });
 		expect(find(rows, "default").retryAt).toBe(NOW + 90_000);
+	});
+
+	test("Retry-After의 실제 HTTP 날짜를 재시도 시각으로 읽는다", async () => {
+		const retryAt = NOW + 90_000;
+		const fetchImpl = (async () => new Response(JSON.stringify(LIMITED_BODY), { status: 429, headers: { "retry-after": new Date(retryAt).toUTCString() } })) as unknown as typeof fetch;
+		const rows = await collectUsage(AUTH, { fetchImpl, now: NOW });
+		expect(find(rows, "default").retryAt).toBe(retryAt);
+	});
+
+	test.each(["garbage", "-1"])("잘못된 Retry-After %s는 무시하고 retryAt을 만들지 않는다", async (header) => {
+		const fetchImpl = (async () => new Response(JSON.stringify(LIMITED_BODY), { status: 429, headers: { "retry-after": header } })) as unknown as typeof fetch;
+		const rows = await collectUsage(AUTH, { fetchImpl, now: NOW });
+		expect(find(rows, "default").retryAt).toBeUndefined();
+	});
+
+	test("실제 reset들보다 훨씬 먼 retryAt은 오류로 간주하고 200으로 지운다", async () => {
+		const first = await collectUsage(AUTH, { fetchImpl: fakeFetch({}).fetchImpl, now: NOW });
+		const previous = first.map((row) => (row.slot === "bob" ? { ...row, retryAt: 4_102_444_800_000 } : row));
+		const { fetchImpl, calls } = fakeFetch({});
+		const rows = await collectUsage(AUTH, { fetchImpl, now: NOW + 60_000, previous });
+		expect(calls.sort()).toEqual(["tok-alice", "tok-bob"]);
+		expect(find(rows, "bob").retryAt).toBeUndefined();
 	});
 });
 
@@ -102,7 +127,7 @@ describe("collectUsage · pool state", () => {
 	test("429로 이전 막대를 유지한 행에도 붙는다", async () => {
 		const first = await collectUsage(AUTH, { fetchImpl: fakeFetch({}).fetchImpl, now: NOW });
 		const rows = await collectUsage(AUTH, {
-			fetchImpl: fakeFetch({ "tok-alice": 429 }).fetchImpl,
+			fetchImpl: fakeFetch({ "tok-alice": 429 }, "120").fetchImpl,
 			now: NOW + 60_000,
 			previous: first,
 			poolState: POOL,

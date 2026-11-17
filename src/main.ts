@@ -48,7 +48,7 @@ if (args.has("--help") || args.has("-h")) {
 
 if (args.has("--json") || args.has("--once")) {
 	const [auth, poolState] = await Promise.all([readAuthFile(), readPoolState()]);
-	const rows = await collectShared(auth, { poolState });
+	const rows = await collectShared(auth, { poolState, force: true });
 	if (timeZone.notice) console.error(`omo-usage: ${timeZone.notice}`);
 	console.log(args.has("--json") ? JSON.stringify(rows, null, 2) : plain(rows, Date.now()));
 	process.exit(0);

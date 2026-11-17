@@ -74,16 +74,31 @@ Updating is the same command again. To remove it: `bun remove -g @orientpine/omo
 ~/.omo/agent/credential-pool-state.json ─ read only ─▶ lastSuccessAt per slot ─▶ ▶ in use · last used
 ```
 
-It opens the two files senpi uses and writes not a single byte to them. Token refresh and account selection are entirely senpi's job, so leaving omo-usage running changes nothing about how senpi behaves. The in-use marker comes from one local file, so that is re-read every 5 seconds.
+It opens senpi's auth and pool files and, for Claude CLI slots, their credential files, without writing to them. Token refresh and account selection remain with senpi and Claude CLI, so leaving omo-usage running changes nothing about how they behave. The in-use marker comes from one local file, so that is re-read every 5 seconds.
 
 **One fetch per account for the whole machine.** Every omo-usage process (each omo session's footer line, the TUI, `--once`, `--json`) shares one cache file, `~/.cache/omo-usage/usage.json` (mode 0600, no tokens; `$XDG_CACHE_HOME` and `OMO_USAGE_CACHE_DIR` move it). An account is really fetched only when its entry is older than **10 minutes** (`OMO_USAGE_REFRESH_SECONDS`, never below the 120-second 429 cooldown), and a lock file makes sure only one process fetches at a time while the others wait and read its result (a lock whose owner died or that is older than 45 s is released). After a 429 no process calls that account before its retry time. Usage is therefore not real-time: each account shows `updated HH:MM`, the time of its last successful fetch.
 
+Opening the TUI, pressing `r`, or explicitly running `--once`/`--json` requests fresh values regardless of that 10-minute age, but never bypasses the 120-second cooldown, a valid `Retry-After`, or an exhausted account. `Retry-After` is read as integer seconds or a real HTTP-date; a missing or invalid value does not invent `retryAt`, while `checkedAt` still enforces the local 120-second cooldown. A successful 0% window with a real future reset suppresses every further usage request for that account until that reset, even when forced; an unknown or past reset allows a fresh request. A cached retry time later than every known reset is treated as corrupt, malformed cached dates and percentages are discarded at the file boundary, and retry timers are bounded.
+
 ## Usage
+
+Claude accounts with `store: "claude-cli"` are resolved from
+`~/.omo/agent/anthropic-subscription-claude/<dirId>/.credentials.json`
+(`claudeAiOauth.accessToken` / `expiresAt`). CLI, TUI, and footer share this
+read-only reader; legacy inline OAuth accounts still work. Invalid directory IDs,
+symlinked account directories or credential files, malformed files, and managed
+sentinels are refused. Expired tokens are never sent and no tokens are refreshed.
+On macOS, a CLI account stored only in Keychain has no readable file token.
+When a readable token becomes available, a cached local `no access token` error is
+replaced immediately under the shared fetch lock. Actual API errors still honor
+their cooldown and `Retry-After`; existing successful usage remains shared.
+Sessions that loaded an older reader need the official `/reload` command to use
+the updated extension without ending the session.
 
 | Command | What it does |
 | --- | --- |
 | `omo-usage` | TUI. Usage refreshes every 150 s, the in-use marker (`▶`) every 5 s. `r` refreshes now, `q` / `Ctrl-C` quits |
-| `omo-usage --once` | Fetch once, print one line per row, exit |
+| `omo-usage --once` | Request fresh values, print one line per row, exit (cooldowns and exhausted resets still apply) |
 | `omo-usage --json` | The same result as JSON (no tokens) |
 | `omo-usage --help` | Help |
 | `omo-usage \| cat` | Piped anywhere it prints a single frame instead of the TUI |
@@ -150,7 +165,7 @@ The order is `OMO_USAGE_TZ` → `timeZone` in `$XDG_CONFIG_HOME/omo-usage/config
 - `status`: `ok` · `expired` · `error` · `unsupported`. `detail` is the reason string (`null` when there is none).
 - `windows[].kind`: `session` (5h) · `weekly` (7d) · `scoped` (per model) · `other`. All times are epoch ms.
 - `lastUsedAt`: when senpi last succeeded with that account (epoch ms, `lastSuccessAt` from `~/.omo/agent/credential-pool-state.json`). Providers that keep no such record (Codex, xAI, kimi-coding, google) do not carry the key at all. `pinned: true` appears only when auth.json pinned that slot. The drop detection for Codex, xAI and kimi-coding (`drained`) needs a previous fetch, so it exists in the TUI only and never in `--json`.
-- `fetchedAt`: when that account's usage was last fetched successfully (epoch ms). While a 429 keeps the previous values, `retryAt` is added; the xAI per-product breakdown adds `note`.
+- `fetchedAt`: when that account's usage was last fetched successfully (epoch ms). While a 429 keeps the previous values, `retryAt` is added only when the server supplied a valid Retry-After time; the xAI per-product breakdown adds `note`.
 
 ```sh
 # example: just the 7d remaining per account
@@ -189,7 +204,7 @@ Claude·orientpine ▕███████████░░░▏ 76% 7d · re
 The one marked `▶`. Every time a request succeeds, senpi writes that slot's `lastSuccessAt` into `~/.omo/agent/credential-pool-state.json`, and omo-usage marks every slot newer than 10 minutes as in use. The TUI re-reads only that file every 5 seconds, so it keeps up regardless of the 150-second usage fetch interval. There is a reason it refuses to declare "this one account": senpi picks an account per session by hash (preferring a pinned account when one exists), so with several sessions several accounts are drained at once. Hence more than one `▶` is possible, and the `just now` / `3m ago` next to it is what you judge by. senpi keeps no such record for Codex, xAI and kimi-coding (`stored/slots` is empty for `chatgpt-subscription` and `kimi-coding`, and xai has no entry at all). For those three the TUI substitutes a comparison of remaining values between fetches — if the remainder dropped, `▶ … in use · -3% since poll 2m ago`. That is not an exact timestamp but somewhere inside the 150-second fetch interval, and a rise caused by a reset does not count as drain. google has no usage API.
 
 **It says expired — do I have to log in again?**
-Usually not. An expired access token is normal, and as long as the refresh token is alive senpi refreshes it the moment it next uses that account. omo-usage only reads auth.json, so it cannot refresh on your behalf (refreshing directly would rotate the refresh token and corrupt senpi's stored copy) — it simply shows the expiry as it is. Re-login is needed only when `refresh failed` is attached, and then you run `/login anthropic-subscription` in the omo TUI and enter the existing slot name at the name prompt, which replaces it in place.
+Usually not. An expired access token is normal; senpi or Claude CLI can renew it when the account is next used. omo-usage reads auth.json and Claude CLI credential files without refreshing them (refreshing directly could rotate a token owned by another process), so it shows the expiry as it is. Re-login is needed when `refresh failed` is attached; run `/login anthropic-subscription` in the omo TUI and enter the existing slot name at the name prompt, which replaces it in place.
 
 **Is there no shell command like `omo auth login`?**
 There is not. `omo auth` only has `check` / `print-api-key` / `print-bearer-token`. Logging in is `/login <provider>` or `/claude-account add` inside the TUI.
@@ -203,7 +218,7 @@ senpi itself also polls every signed-in Claude account (every 5 minutes) and kee
 `GrokBuild 12% · GrokImagine 1%` are not each product's own limit but their shares of the same weekly pool, so drawing them as remaining bars would say something false. The only bar is the pool as a whole (`creditUsagePercent`).
 
 **Can a token leak somewhere?**
-auth.json is opened read-only and tokens are used in the fetch call and nowhere else. The screen state (`AccountRow`) never holds a token, so `--json` cannot expose one either. This tool does not write a single byte to auth.json.
+auth.json and Claude CLI credential files are opened read-only and tokens stay in memory for the fetch call. The screen state (`AccountRow`) and shared usage cache never hold a token, so `--json` cannot expose one either. This tool does not write to credential files or refresh tokens.
 
 ## Supported providers
 
@@ -221,7 +236,8 @@ auth.json is opened read-only and tokens are used in the fetch call and nowhere 
 - **Never write to auth.json.** Refreshing tokens is senpi's job.
 - **Expired ≠ dead.** The re-login hint is attached only to slots that senpi's failover stamped with `blockReason: "auth_error"`.
 - **Never declare a single "current account".** senpi chooses per session, so every slot shows its own last-drain time and earns a `▶` when that is recent (10 minutes). Different evidence, different wording (`just now` vs `-3% since poll`).
-- **A 429 never erases a bar.** Keep the previous value with its update time, and no process calls before the retry time.
+- **A 429 never erases a bar.** Keep the previous value with its update time, honor a valid Retry-After, and otherwise let the local 120-second cooldown prevent another call without inventing retryAt.
+- **An exhausted account is left alone.** A real successful 0% window with a future reset means no usage request until that reset, even for a manual refresh.
 - **No line ever exceeds the terminal width.** Hangul and full-width glyph widths are measured by hand, so columns hold even with color applied.
 
 <details>
@@ -230,7 +246,7 @@ auth.json is opened read-only and tokens are used in the fetch call and nowhere 
 - **Codex windows are told apart by length, not by position.** Depending on the plan, `primary_window` can be the weekly one or the 5-hour one, so `limit_window_seconds` (18000 / 604800) decides.
 - **Claude's per-model weekly limits live only in `weekly_scoped` inside `limits[]`.** Top-level keys such as `seven_day_opus` are usually `null`.
 - **The xAI response is proto3 JSON, so a zero drops its key.** When `config.currentPeriod` is present but `creditUsagePercent` is missing, read it as 0 (100% remaining); when `currentPeriod` itself is missing it is not a credits response at all, so it stays an `error`. `{"val":0}` arrives as `{}`.
-- **The Anthropic 429 window is about 95 seconds per token** (measured 2026-09-18). Use `Retry-After` when it is present, otherwise 120 seconds as the cooldown.
+- **The Anthropic 429 window is about 95 seconds per token** (measured 2026-09-18). Parse Retry-After as integer seconds or an HTTP-date when it is present and valid; otherwise keep the 120-second local cooldown through `checkedAt` without inventing `retryAt`.
 - **The xAI slot's label is `default`.** senpi stores no displayName for xai.
 - **The drain record exists only in `credential-pool-state.json`.** `providers.<provider>.lanes.stored.slots.<slot>.lastSuccessAt` is updated on every successful request. `lease` is a half-open probe lock (30 s), not an in-use signal. Stale slot names and account-id keys linger in the file, so matching happens only against the current auth.json slot names, and Codex and kimi-coding slots are missing from it entirely (xai has no provider entry at all). That is why those three fall back to the drop in remaining values between TUI refreshes — `collect.ts` compares the previous result's `remainingPercent` per window label, keeps the largest drop as `drained`, never treats a rise (a reset) as a drain, and holds on to the previous detection when there is no new one.
 
