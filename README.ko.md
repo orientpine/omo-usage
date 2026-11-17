@@ -84,7 +84,7 @@ TUI를 열거나 `r`을 누르거나 `--once`·`--json`을 직접 실행하면 1
 
 `store: "claude-cli"`인 Claude 계정은
 `~/.omo/agent/anthropic-subscription-claude/<dirId>/.credentials.json`의
-`claudeAiOauth.accessToken` / `expiresAt`을 읽는다. CLI·TUI·footer가 같은
+`claudeAiOauth.accessToken` / `expiresAt`을 읽는다. CLI·TUI가 같은
 읽기 전용 경로를 쓰며, 구형 인라인 OAuth 계정도 지원한다. 잘못된 디렉터리 ID,
 심볼릭 링크인 계정 디렉터리·자격증명 파일, 깨진 파일, managed 표식은 거부한다.
 만료된 토큰은 전송하지 않으며 토큰을 갱신하지 않는다. macOS에서 Keychain에만
@@ -96,7 +96,7 @@ TUI를 열거나 `r`을 누르거나 `--once`·`--json`을 직접 실행하면 1
 
 | 명령 | 동작 |
 | --- | --- |
-| `omo-usage` | TUI. 사용량은 150초마다, 차감 중 표시(`▶`)는 5초마다 갱신. `r` 즉시 갱신, `q` / `Ctrl-C` 종료 |
+| `omo-usage` | TUI. 사용량은 시작과 `r` 입력 때만 요청. 로컬 차감 중 표시(`▶`)는 5초마다 갱신. `r` 수동 요청, `q` / `Ctrl-C` 종료 |
 | `omo-usage --once` | 새 값을 요청해 한 줄씩 출력하고 종료 (쿨다운·소진 계정의 reset은 유지) |
 | `omo-usage --json` | 같은 결과를 JSON으로 출력 (토큰 없음) |
 | `omo-usage --help` | 도움말 |
@@ -105,7 +105,7 @@ TUI를 열거나 `r`을 누르거나 `--once`·`--json`을 직접 실행하면 1
 ### 화면 읽는 법
 
 - **한 계정 = 한 블록.** 첫 줄 `●` 뒤에 계정 이름(Codex는 `(pro)`/`(team)` 플랜, auth.json이 고정한 슬롯은 `(pinned)`), 이어지는 창은 `│`로 묶인다.
-- **지금 차감 중인 계정은 `▶`다.** senpi가 최근 10분 안에 그 계정으로 요청을 성공시켰으면 마커가 초록 `▶`가 되고 블록 끝에 `in use · just now`이 붙는다. 더 오래됐으면 `●` 그대로에 dim `last used 3h ago`. senpi는 세션마다 계정을 따로 고르므로 `▶`가 둘 이상일 수 있다. Codex·xAI·kimi-coding은 senpi가 이 기록을 남기지 않으므로 TUI가 직전 조회와 잔여를 비교해 줄어든 만큼을 `in use · -3% since poll 2m ago`로 적는다 — 근거가 다르니 문구도 다르다(정확한 시각이 아니라 150초 조회 주기 안 어딘가이고, Codex는 정수 %라 1%p 미만은 안 잡힌다). 오래되면 `last drain seen 25m ago`. `--once`/`--json`은 직전 조회가 없어 이 표시가 없다. google은 사용량 API 자체가 없다.
+- **지금 차감 중인 계정은 `▶`다.** senpi가 최근 10분 안에 그 계정으로 요청을 성공시켰으면 마커가 초록 `▶`가 되고 블록 끝에 `in use · just now`이 붙는다. 더 오래됐으면 `●` 그대로에 dim `last used 3h ago`. senpi는 세션마다 계정을 따로 고르므로 `▶`가 둘 이상일 수 있다. Codex·xAI·kimi-coding은 senpi가 이 기록을 남기지 않으므로 TUI가 직전 조회와 잔여를 비교해 줄어든 만큼을 `in use · -3% since poll 2m ago`로 적는다 — 근거가 다르니 문구도 다르다(정확한 시각이 아니라 수동 조회 사이 어딘가이고, Codex는 정수 %라 1%p 미만은 안 잡힌다). 오래되면 `last drain seen 25m ago`. `--once`/`--json`은 직전 조회가 없어 이 표시가 없다. google은 사용량 API 자체가 없다.
 - **막대와 %는 남은 양이다.** 창마다 `5h ▕████████████░░▏  88% left · …`처럼 14칸 고정 막대로 그린다 — [asmond-lab/omo-usage](https://github.com/asmond-lab/omo-usage)와 같은 표시 방식. 100%가 아직 하나도 안 쓴 상태. 초록 > 50% · 주황 20–50% · 빨강 < 20%, 빨강이면 `running out`이 붙는다.
 - **창 이름**: `5h` 세션, `7d` 주간, `Fable`처럼 모델 이름이 붙으면 그 모델의 주간 한도.
 - **리셋 시각**은 오늘이면 `resets 16:00`, 아니면 `resets 09/22 14:00`, 그 뒤에 `in 2h` 같은 상대 시간. 빨강 줄에도 남겨 두어 바닥난 창이 언제 돌아오는지 보인다. 터미널 폭이 모자라면 `…`로 자르지 않고 줄인다: 먼저 상대 시간을 `6d16h`로, 그다음 `running out`을 빼고(빨강과 비율이 이미 말해 준다), 마지막에 상대 시간을 뺀다(날짜·시각은 남는다). 바닥난 창도 다른 줄만큼 남은 시간이 보인다.
@@ -200,7 +200,7 @@ Claude·orientpine ▕███████████░░░▏ 76% 7d · re
 ## FAQ
 
 **지금 senpi가 어느 계정을 차감하고 있는지 알 수 있나?**
-`▶`가 붙은 계정이다. senpi는 요청이 성공할 때마다 `~/.omo/agent/credential-pool-state.json`에 그 슬롯의 `lastSuccessAt`을 적고, omo-usage는 그 값이 10분 이내인 슬롯을 `in use`으로 표시한다. TUI는 이 파일만 5초마다 다시 읽으므로 사용량 조회 주기(150초)와 무관하게 바로 따라온다. "지금 이 계정 하나"라고 단정하지 않는 이유가 있다: senpi는 세션마다 해시로 계정을 고르고(고정 계정이 있으면 그것을 우선), 세션이 여럿이면 여러 계정이 동시에 차감된다. 그래서 `▶`는 둘 이상일 수 있고, 옆의 `just now`·`3m ago`가 판단 근거다. Codex·xAI·kimi-coding은 senpi가 이 기록을 남기지 않는다(`chatgpt-subscription`·`kimi-coding`의 `stored/slots`가 비어 있고 xai는 항목 자체가 없다). 그래서 TUI는 이 셋을 직전 조회와 잔여를 비교하는 방식으로 대신한다 — 잔여가 줄었으면 `▶ … in use · -3% since poll 2m ago`. 정확한 시각이 아니라 150초 조회 주기 안 어딘가이며, 리셋으로 잔여가 느는 건 차감으로 치지 않는다. google은 사용량 API가 없다.
+`▶`가 붙은 계정이다. senpi는 요청이 성공할 때마다 `~/.omo/agent/credential-pool-state.json`에 그 슬롯의 `lastSuccessAt`을 적고, omo-usage는 그 값이 10분 이내인 슬롯을 `in use`으로 표시한다. TUI는 이 파일만 5초마다 다시 읽으므로 서버 요청 없이 바로 따라온다. "지금 이 계정 하나"라고 단정하지 않는 이유가 있다: senpi는 세션마다 해시로 계정을 고르고(고정 계정이 있으면 그것을 우선), 세션이 여럿이면 여러 계정이 동시에 차감된다. 그래서 `▶`는 둘 이상일 수 있고, 옆의 `just now`·`3m ago`가 판단 근거다. Codex·xAI·kimi-coding은 senpi가 이 기록을 남기지 않는다(`chatgpt-subscription`·`kimi-coding`의 `stored/slots`가 비어 있고 xai는 항목 자체가 없다). 그래서 TUI는 이 셋을 직전 조회와 잔여를 비교하는 방식으로 대신한다 — 잔여가 줄었으면 `▶ … in use · -3% since poll 2m ago`. 정확한 시각이 아니라 150초 조회 주기 안 어딘가이며, 리셋으로 잔여가 느는 건 차감으로 치지 않는다. google은 사용량 API가 없다.
 
 **"만료"라는데 다시 로그인해야 하나?**
 대개 아니다. 액세스 토큰 만료는 정상이며, 계정을 다음에 쓸 때 senpi 또는 Claude CLI가 갱신할 수 있다. omo-usage는 auth.json과 Claude CLI 자격증명 파일을 갱신 없이 읽고(직접 refresh하면 다른 프로세스가 관리하는 토큰이 회전될 수 있다) 만료 상태를 그대로 보여준다. `refresh failed`가 붙으면 omo TUI에서 `/login anthropic-subscription`를 실행하고 이름 프롬프트에 기존 슬롯 이름을 입력해 제자리에서 교체한다.
@@ -264,7 +264,7 @@ bun run src/main.ts   # 로컬 실행 (= bin/omo-usage.ts)
 ```
 src/
   main.ts         CLI 진입: --once / --json / --help, 아니면 TUI
-  tui.ts          대체 화면, 키 입력, 150초 캐시 재읽기([r]은 강제 조회), 5초 pool-state 갱신, 429 재시도 예약
+  tui.ts          대체 화면, 시작/[r] 요청, 화면 표시와 5초 로컬 pool 재읽기
   cache.ts        머신 공유 캐시 파일 + 잠금: 오래된 계정만, 한 번, 한 프로세스에서 조회
   collect.ts      provider별 fetch, 429 쿨다운, 직전 조회 대비 잔여 감소 감지
   senpi.ts        senpi의 subscription-usage.json → senpi가 이미 받은 Claude 값 (읽기 전용)
@@ -273,7 +273,7 @@ src/
   pool.ts         credential-pool-state.json → 슬롯별 마지막 차감 시각 (▶ 사용 중)
   credentials.ts  토큰 맵 (화면 상태와 분리)
   render.ts       프레임 렌더: 폭 계산, 색, ● / ▶ / │ 가이드
-  footer.ts       omo footer 한 줄 (① 계정 · ② pool · ③ 예외), 5분 캐시 조회기, senpi 확장 연결
+  footer.ts       omo footer 한 줄 (① 계정 · ② pool · ③ 예외), 5분 로컬 캐시 읽기, senpi 확장 연결
   types.ts        AccountRow, UsageWindow
 extension/
   index.js        senpi 확장 진입점 (공식 setWidget API만 사용 → src/footer.ts)
@@ -282,3 +282,5 @@ extension/
 ## 라이선스
 
 [MIT](LICENSE)
+
+사용량은 CLI 실행, TUI 시작, `r` 입력 때만 요청한다. 주기적 사용량 요청과 429 자동 재시도는 없다. 재시도 시각은 화면에 남고 쿨다운 뒤 `r`로 요청한다. footer는 공유 로컬 캐시만 읽으며 캐시가 없거나 오래돼도 서버에 요청하지 않는다. `src/tui.ts`의 타이머는 화면 표시와 5초 로컬 pool 파일 재읽기만 담당한다.
