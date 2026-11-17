@@ -12,10 +12,24 @@ const timer = (fn: () => void, ms: number) => {
 	timers.push(handle);
 	return handle;
 };
-const settle = () => Bun.sleep(30);
+// Watchdog uses the real clock; simulated timers must never control the test timeout.
+const realSetTimeout = globalThis.setTimeout;
+const realClearTimeout = globalThis.clearTimeout;
+async function bounded<T>(event: Promise<T>, label: string): Promise<T> {
+	let timeout: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([event, new Promise<never>((_, reject) => {
+			timeout = realSetTimeout(() => reject(new Error(`timed out waiting for ${label}`)), 2_000);
+		})]);
+	} finally {
+		if (timeout !== undefined) realClearTimeout(timeout);
+	}
+}
 let requests = 0;
+let onRequest = (): void => {};
 globalThis.fetch = Object.assign(async () => {
 	requests++;
+	onRequest();
 	return mode === "retry"
 		? new Response("{}", { status: 429, headers: { "retry-after": "120" } })
 		: Response.json({ five_hour: { utilization: 12, resets_at: new Date(now + 3_600_000).toISOString() } });
@@ -47,18 +61,44 @@ try {
 		poller.stop();
 	} else {
 		Object.defineProperty(process.stdout, "isTTY", { value: true });
-		process.stdout.write = (() => true) as typeof process.stdout.write;
+		Object.defineProperty(process.stdout, "columns", { value: 200 });
+		let refreshing = false;
+		let onIdle = (): void => {};
+		let onDraw = (): void => {};
+		process.stdout.write = ((chunk: unknown) => {
+			const frame = String(chunk);
+			if (frame.includes(" · loading…")) refreshing = true;
+			else if (refreshing) {
+				refreshing = false;
+				onIdle();
+			}
+			onDraw();
+			return true;
+		}) as typeof process.stdout.write;
 		process.stdin.resume = () => process.stdin;
 		const { runTui } = await import("../../src/tui.ts");
 		await runTui();
 		assert.equal(requests, 1, "opening the TUI requests usage");
 		now += 900_000;
-		for (const { fn } of [...timers]) fn();
-		await settle();
+		for (const { fn, ms } of [...timers]) {
+			const drawn = Promise.withResolvers<void>();
+			const idle = Promise.withResolvers<void>();
+			onDraw = drawn.resolve;
+			onIdle = idle.resolve;
+			fn();
+			// A regressed refresh starts with a loading frame. Wait for its final
+			// idle frame, so even a slow request cannot evade the negative check.
+			if (refreshing) await bounded(idle.promise, "timer refresh completion");
+			else if (ms === 5_000) await bounded(drawn.promise, "local pool reread draw");
+		}
 		assert.equal(requests, 1, "elapsed time must not request usage or retry 429");
 		assert.ok(timers.some(({ ms }) => ms === 5_000), "keep local pool reread");
+		const requested = Promise.withResolvers<void>();
+		const idle = Promise.withResolvers<void>();
+		onRequest = requested.resolve;
+		onIdle = idle.resolve;
 		process.stdin.emit("data", Buffer.from("r"));
-		await settle();
+		await bounded(Promise.all([requested.promise, idle.promise]), "manual request and refresh completion");
 		assert.equal(requests, 2, "r explicitly requests usage after cooldown");
 	}
 } finally {

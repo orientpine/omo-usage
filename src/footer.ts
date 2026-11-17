@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import type { AccountRow, UsageWindow } from "./types.ts";
 import { cachePath, readCache } from "./cache.ts";
-import { readAuthFile } from "./credentials.ts";
+import { buildRoster } from "./auth.ts";
+import { accountKey, readAuthFile } from "./credentials.ts";
 import { BAR_CELLS, BAR_EMPTY, LEVEL_RED, compose, displayWidth, isStale, levelColor, resetStamp, type Part } from "./render.ts";
 
 /** 로컬 공유 캐시만 다시 읽는다. footer는 서버에 요청하지 않는다. */
@@ -152,6 +153,8 @@ function realTimer(fn: () => void, ms: number): unknown {
  * FOOTER_REFRESH_MS마다 로컬 공유 캐시만 읽는다. 캐시가 없거나 오래돼도 서버에는 요청하지 않는다.
  */
 export function createUsagePoller(onRows: (rows: readonly AccountRow[]) => void, deps: PollerDeps = {}): UsagePoller {
+	const readAuth = deps.readAuth ?? (() => readAuthFile());
+	const now = deps.now ?? Date.now;
 	const setTimer = deps.setTimer ?? realTimer;
 	const clearTimer = deps.clearTimer ?? ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
 	let rows: readonly AccountRow[] = [];
@@ -163,7 +166,9 @@ export function createUsagePoller(onRows: (rows: readonly AccountRow[]) => void,
 		if (inflight) return inflight;
 		inflight = (async () => {
 			try {
-				rows = [...(await readCache(deps.cachePath ?? cachePath())).values()].map((entry) => entry.row);
+				const [auth, cache] = await Promise.all([readAuth(), readCache(deps.cachePath ?? cachePath())]);
+				const current = new Set(buildRoster(auth, now()).map((row) => accountKey(row.provider, row.slot)));
+				rows = [...cache.values()].map((entry) => entry.row).filter((row) => current.has(accountKey(row.provider, row.slot)));
 				if (running) onRows(rows);
 			} catch (error) {
 				deps.onError?.(error instanceof Error ? error.message : String(error));

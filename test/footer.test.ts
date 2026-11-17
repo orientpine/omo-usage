@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -133,14 +133,47 @@ describe("createUsagePoller", () => {
 		const path = join(mkdtempSync(join(tmpdir(), "omo-usage-test-")), "usage.json");
 		await Bun.write(path, JSON.stringify({ version: 1, accounts: { "anthropic-subscription/orientpine": { checkedAt: NOW, row: ROWS[0] } } }));
 		const timers: (() => void)[] = [];
-		const poller = createUsagePoller(() => {}, { cachePath: path, setTimer: (fn) => timers.push(fn), clearTimer: () => {} });
-		poller.start();
+		const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(Response.json(OK_BODY));
+		const poller = createUsagePoller(() => {}, {
+			readAuth: async () => ({ "anthropic-subscription": { accounts: [{ name: "orientpine", access: "fake", expires: future }] } }),
+			now: () => NOW,
+			cachePath: path,
+			setTimer: (fn) => timers.push(fn),
+			clearTimer: () => {},
+		});
+		try {
+			poller.start();
+			await poller.refresh();
+			expect(poller.rows()[0]?.windows).toEqual(ROWS[0]?.windows ?? []);
+			timers[0]?.();
+			await poller.refresh();
+			expect(poller.rows()[0]?.slot).toBe("orientpine");
+			expect(fetchSpy).not.toHaveBeenCalled();
+		} finally {
+			poller.stop();
+			fetchSpy.mockRestore();
+		}
+	});
+
+	test("omits deleted cache accounts from pool cells and exceptions", async () => {
+		const path = join(mkdtempSync(join(tmpdir(), "omo-usage-test-")), "usage.json");
+		const cached = [
+			row({ slot: "alice", windows: [win("7d", 56)] }),
+			row({ slot: "deleted-slot", windows: [win("7d", 3)] }),
+		];
+		await Bun.write(path, JSON.stringify({ version: 1, accounts: Object.fromEntries(cached.map((row) => [
+			`${row.provider}/${row.slot}`, { checkedAt: NOW, row },
+		])) }));
+		const poller = createUsagePoller(() => {}, {
+			readAuth: async () => ({ "anthropic-subscription": { accounts: [AUTH["anthropic-subscription"].accounts[0]] } }),
+			now: () => NOW,
+			cachePath: path,
+		});
 		await poller.refresh();
-		expect(poller.rows()[0]?.windows).toEqual(ROWS[0]?.windows ?? []);
-		timers[0]?.();
-		await poller.refresh();
-		expect(poller.rows()[0]?.slot).toBe("orientpine");
-		poller.stop();
+		expect(poller.rows().map((row) => row.slot)).toEqual(["alice"]);
+		expect(strip(renderFooter(poller.rows(), { provider: "anthropic-subscription", slot: null }, 120, NOW))).toBe("Claude │ pool ▅");
+		const codex = row({ provider: "chatgpt-subscription", windows: [win("7d", 80)] });
+		expect(strip(renderFooter([...poller.rows(), codex], { provider: codex.provider, slot: null }, 120, NOW))).toBe("Codex │ pool ▇");
 	});
 });
 
@@ -156,14 +189,19 @@ describe("createFooterExtension", () => {
 		const handlers = new Map<string, (event: unknown, ctx: ExtensionContextLike) => unknown>();
 		let resize: () => void = () => {};
 		let unsubscribed = false;
+		let authReads = 0;
+		let timers = 0;
 
 		const path = join(mkdtempSync(join(tmpdir(), "omo-usage-test-")), "usage.json");
 		writeFileSync(path, JSON.stringify({ version: 1, accounts: Object.fromEntries(["alice", "bob"].map((slot) => [`anthropic-subscription/${slot}`, { checkedAt: NOW, row: row({ slot, label: slot, windows: [win("5h", 84), win("7d", 56, NOW + 86400000)] }) }])) }));
 		const extension = createFooterExtension({
-			readAuth: async () => AUTH,
+			readAuth: async () => {
+				authReads++;
+				return AUTH;
+			},
 			cachePath: path,
 			now: () => NOW,
-			setTimer: () => 0,
+			setTimer: () => ++timers,
 			clearTimer: () => {},
 			columns: () => cols.value,
 			onResize: (listener) => {
@@ -181,7 +219,7 @@ describe("createFooterExtension", () => {
 			sessionManager: { getSessionId: () => "session-1" },
 			ui: { setWidget, notify: () => {} },
 		};
-		return { handlers, ctx, resize: () => resize(), unsubscribed: () => unsubscribed };
+		return { handlers, ctx, resize: () => resize(), unsubscribed: () => unsubscribed, authReads: () => authReads, timers: () => timers };
 	}
 
 	/** 조회가 끝나 첫 줄이 그려지는 그 setWidget 호출 자체를 기다린다 (시간 대기 없이). */
@@ -225,11 +263,12 @@ describe("createFooterExtension", () => {
 	});
 
 	test("setWidget이 없으면 아무것도 그리지 않고 조회도 하지 않는다", async () => {
-		const { handlers, ctx } = setup(undefined);
+		const { handlers, ctx, authReads, timers } = setup(undefined);
 		await handlers.get("session_start")?.({ reason: "startup" }, ctx);
 		await handlers.get("model_select")?.({}, ctx);
 		await handlers.get("session_shutdown")?.({ reason: "quit" }, ctx);
-		expect(ctx.ui.setWidget).toBeUndefined();
+		expect(authReads()).toBe(0);
+		expect(timers()).toBe(0);
 	});
 
 	test("setWidget이 던지면 조용히 빠진다: 예외를 올리지 않고 다시 그리지도 않는다", async () => {
