@@ -39,15 +39,45 @@ function httpDetail(status: number): string {
 	return `HTTP ${status}`;
 }
 
-function retryAtFrom(response: Response, now: number): number {
-	const seconds = Number(response.headers.get("retry-after"));
-	return now + (Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : RATE_LIMIT_COOLDOWN_MS);
+function retryAtFrom(response: Response, now: number): number | undefined {
+	const header = response.headers.get("retry-after")?.trim();
+	if (!header) return undefined;
+	if (/^\d+$/.test(header)) {
+		const at = now + Number(header) * 1000;
+		return Number.isSafeInteger(at) ? at : undefined;
+	}
+	const at = Date.parse(header);
+	const httpDate = /^(?:Mon|Monday|Tue|Tuesday|Wed|Wednesday|Thu|Thursday|Fri|Friday|Sat|Saturday|Sun|Sunday)(?:,| )/.test(header);
+	return httpDate && Number.isFinite(at) ? at : undefined;
 }
 
-/** 이전 막대가 있으면 그대로 두고 재시도 시각만 붙인다 — 화면에는 오류 대신 마지막 성공 시각(updated HH:MM)이 남는다. */
-function rateLimited(row: AccountRow, previous: AccountRow | undefined, retryAt: number): AccountRow {
-	if (previous && previous.windows.length > 0) return { ...previous, retryAt };
-	return { ...row, status: "error", detail: httpDetail(429), windows: [], retryAt };
+/** 성공한 사용량의 0% 창이 실제 미래 reset을 가리키면 그때까지 다시 조회하지 않는다. */
+export function exhaustedResetAt(row: AccountRow, now: number): number | undefined {
+	if (row.status !== "ok" || row.fetchedAt === undefined || !Number.isFinite(row.fetchedAt) || row.fetchedAt > now) return undefined;
+	const resets = row.windows.flatMap((window) =>
+		window.remainingPercent === 0 && window.resetsAt !== null && Number.isFinite(window.resetsAt) && window.resetsAt > now ? [window.resetsAt] : [],
+	);
+	return resets.length === 0 ? undefined : Math.min(...resets);
+}
+
+/** 미래 retryAt이 실제 usage reset들보다도 뒤면 잘못 저장된 값으로 보고 조회를 막지 않는다. */
+export function validFutureRetryAt(row: AccountRow, now: number): number | undefined {
+	const retryAt = row.retryAt;
+	if (retryAt === undefined || !Number.isFinite(retryAt) || retryAt <= now) return undefined;
+	const resets = row.windows.flatMap((window) =>
+		window.resetsAt !== null && Number.isFinite(window.resetsAt) ? [window.resetsAt] : [],
+	);
+	return resets.length > 0 && retryAt > Math.max(...resets) ? undefined : retryAt;
+}
+
+/** 이전 막대가 있으면 그대로 두고, 서버가 실제로 본낸 재시도 시각만 붙인다. 로컬 429 쿨다운은 cache.checkedAt이 지킨다. */
+function rateLimited(row: AccountRow, previous: AccountRow | undefined, retryAt: number | undefined): AccountRow {
+	const retry = retryAt === undefined ? {} : { retryAt };
+	if (previous && previous.windows.length > 0) {
+		const { retryAt: _previousRetryAt, ...rest } = previous;
+		return { ...rest, ...retry };
+	}
+	return { ...row, status: "error", detail: httpDetail(429), windows: [], ...retry };
 }
 
 /** 조회하지 않은 계정: 명단(roster)의 현재 정보에 직전 사용량 필드만 얹는다. */
@@ -172,7 +202,8 @@ export async function collectUsage(auth: unknown, options: CollectOptions = {}):
 		const key = accountKey(row.provider, row.slot);
 		const prev = previous.get(key);
 		if (prev !== undefined && options.reuse?.has(key)) return carry(row, prev);
-		if (prev?.retryAt !== undefined && prev.retryAt > now) return prev;
+		if (prev !== undefined && exhaustedResetAt(prev, now) !== undefined) return prev;
+		if (prev !== undefined && validFutureRetryAt(prev, now) !== undefined) return prev;
 		const secret = secrets.get(key);
 		if (!secret) return { ...row, status: "error" as const, detail: "no access token" };
 		return fetchOne(row, secret, { ...options, now }, prev);

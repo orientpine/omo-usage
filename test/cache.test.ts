@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { collectShared, DEFAULT_REFRESH_MS, LOCK_STALE_MS, refreshIntervalMs } from "../src/cache.ts";
+import { collectShared, DEFAULT_REFRESH_MS, LOCK_STALE_MS, readCache, refreshIntervalMs } from "../src/cache.ts";
 import { RATE_LIMIT_COOLDOWN_MS } from "../src/collect.ts";
+import { renderFrame } from "../src/render.ts";
 import type { AccountRow } from "../src/types.ts";
 
 const NOW = Date.UTC(2026, 9, 8, 5, 0, 0);
@@ -21,6 +22,12 @@ const AUTH = {
 	},
 };
 const OK_BODY = { five_hour: { utilization: 16, resets_at: "2026-10-08T09:00:00Z" }, seven_day: { utilization: 44, resets_at: "2026-10-12T00:00:00Z" } };
+const NO_ACCESS = {
+	"anthropic-subscription": {
+		...AUTH["anthropic-subscription"],
+		accounts: AUTH["anthropic-subscription"].accounts.map(({ access: _access, ...account }) => account),
+	},
+};
 
 function tempCache(): string {
 	return join(mkdtempSync(join(tmpdir(), "omo-usage-cache-test-")), "usage.json");
@@ -47,9 +54,61 @@ function fakeFetch(statusOf: (token: string) => number = () => 200, gate?: Promi
 	return { fetchImpl, calls, firstCall };
 }
 
+function exhaustedFetch(resetAt: number | null): typeof fetch {
+	return (async (_url: unknown, init?: RequestInit) => {
+		const token = String(new Headers(init?.headers).get("authorization")).replace("Bearer ", "");
+		const weekly = { utilization: 100, ...(resetAt === null ? {} : { resets_at: new Date(resetAt).toISOString() }) };
+		const body = token.startsWith("tok-bob") ? { ...OK_BODY, seven_day: weekly } : OK_BODY;
+		return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+	}) as unknown as typeof fetch;
+}
+
 const bob = (rows: AccountRow[]) => rows.find((row) => row.slot === "bob");
 
 describe("collectShared · 머신 공유 캐시", () => {
+	test("로컬 인증이 회복되면 신선한 no access token 캐시를 즉시 대체하고 동시 독자는 한 번만 조회한다", async () => {
+		const cachePath = tempCache();
+		await collectShared(NO_ACCESS, { fetchImpl: fakeFetch().fetchImpl, now: NOW, cachePath });
+		const { fetchImpl, calls } = fakeFetch();
+
+		const owner = collectShared(AUTH, { fetchImpl, now: NOW + 1, cachePath });
+		const waiter = collectShared(AUTH, { fetchImpl, now: NOW + 1, cachePath, sleep: () => owner.then(() => {}) });
+		const results = await Promise.all([owner, waiter]);
+
+		expect(calls.sort()).toEqual(["tok-alice-SECRET", "tok-bob-SECRET"]);
+		for (const rows of results) expect(rows.map((row) => [row.slot, row.status, row.windows[1]?.remainingPercent])).toEqual([["alice", "ok", 56], ["bob", "ok", 56]]);
+		const cached = JSON.parse(readFileSync(cachePath, "utf8"));
+		expect(cached.accounts["anthropic-subscription/alice"].row.status).toBe("ok");
+	});
+
+	test("인증이 아직 없으면 로컬 오류 캐시를 다시 쓰거나 API를 부르지 않는다", async () => {
+		const cachePath = tempCache();
+		const { fetchImpl, calls } = fakeFetch();
+		await collectShared(NO_ACCESS, { fetchImpl, now: NOW, cachePath });
+		const before = readFileSync(cachePath, "utf8");
+
+		const rows = await collectShared(NO_ACCESS, { fetchImpl, now: NOW + 1, cachePath });
+
+		expect(rows.map((row) => row.detail)).toEqual(["no access token", "no access token"]);
+		expect(calls).toEqual([]);
+		expect(readFileSync(cachePath, "utf8")).toBe(before);
+	});
+
+	test("옛 독자가 정상 막대를 인증 오류로 덮은 뒤에도 현재 독자는 해당 계정만 회복하고 정상 형제 계정은 재사용한다", async () => {
+		const cachePath = tempCache();
+		await collectShared(AUTH, { fetchImpl: fakeFetch().fetchImpl, now: NOW, cachePath });
+		const oldAuth = { "anthropic-subscription": { ...AUTH["anthropic-subscription"], accounts: [NO_ACCESS["anthropic-subscription"].accounts[0], AUTH["anthropic-subscription"].accounts[1]] } };
+		const overwritten = await collectShared(oldAuth, { fetchImpl: fakeFetch().fetchImpl, now: NOW + DEFAULT_REFRESH_MS, cachePath });
+		expect(overwritten.find((row) => row.slot === "alice")?.detail).toBe("no access token");
+		const { fetchImpl, calls } = fakeFetch();
+
+		const rows = await collectShared(AUTH, { fetchImpl, now: NOW + DEFAULT_REFRESH_MS + 1, cachePath });
+
+		expect(calls).toEqual(["tok-alice-SECRET"]);
+		expect(rows.map((row) => [row.slot, row.status, row.windows[1]?.remainingPercent])).toEqual([["alice", "ok", 56], ["bob", "ok", 56]]);
+		expect(bob(rows)?.fetchedAt).toBe(NOW + DEFAULT_REFRESH_MS);
+	});
+
 	test("여러 프로세스가 동시에 떠도 계정당 실제 조회는 간격 안에 한 번뿐이다", async () => {
 		const cachePath = tempCache();
 		let open: () => void = () => {};
@@ -148,5 +207,99 @@ describe("collectShared · 머신 공유 캐시", () => {
 		expect(refreshIntervalMs({ OMO_USAGE_REFRESH_SECONDS: "1800" })).toBe(1_800_000);
 		expect(refreshIntervalMs({ OMO_USAGE_REFRESH_SECONDS: "10" })).toBe(RATE_LIMIT_COOLDOWN_MS);
 		expect(refreshIntervalMs({ OMO_USAGE_REFRESH_SECONDS: "garbage" })).toBe(DEFAULT_REFRESH_MS);
+	});
+
+	test("keeps the local 429 cooldown without inventing retryAt", async () => {
+		const cachePath = tempCache();
+		const limited = (async () => new Response(JSON.stringify({ error: { type: "rate_limit_error" } }), { status: 429 })) as unknown as typeof fetch;
+		const rows = await collectShared(AUTH, { fetchImpl: limited, now: NOW, cachePath });
+		expect(rows.every((row) => row.retryAt === undefined)).toBe(true);
+		const later = fakeFetch();
+
+		await collectShared(AUTH, { fetchImpl: later.fetchImpl, now: NOW + 1_000, cachePath, force: true });
+
+		expect(later.calls).toEqual([]);
+	});
+
+	test("refetches and clears a cached retryAt far beyond every real reset", async () => {
+		const cachePath = tempCache();
+		await collectShared(AUTH, { fetchImpl: fakeFetch().fetchImpl, now: NOW, cachePath });
+		const raw = JSON.parse(readFileSync(cachePath, "utf8"));
+		raw.accounts["anthropic-subscription/bob"].row.retryAt = 4_102_444_800_000;
+		writeFileSync(cachePath, JSON.stringify(raw));
+		const later = fakeFetch();
+		const rows = await collectShared(AUTH, { fetchImpl: later.fetchImpl, now: NOW + DEFAULT_REFRESH_MS, cachePath, force: true });
+
+		expect(later.calls.sort()).toEqual(["tok-alice-SECRET", "tok-bob-SECRET"]);
+		expect(bob(rows)?.retryAt).toBeUndefined();
+		const persisted = JSON.parse(readFileSync(cachePath, "utf8"));
+		expect(persisted.accounts["anthropic-subscription/bob"].row.retryAt).toBeUndefined();
+	});
+
+	test("refetches when every cached reset is past and retryAt is far future", async () => {
+		const cachePath = tempCache();
+		await collectShared(AUTH, { fetchImpl: fakeFetch().fetchImpl, now: NOW, cachePath });
+		const raw = JSON.parse(readFileSync(cachePath, "utf8"));
+		const broken = raw.accounts["anthropic-subscription/bob"].row;
+		broken.retryAt = 4_102_444_800_000;
+		for (const window of broken.windows) window.resetsAt = NOW - 1_000;
+		writeFileSync(cachePath, JSON.stringify(raw));
+		const later = fakeFetch();
+		const rows = await collectShared(AUTH, { fetchImpl: later.fetchImpl, now: NOW + DEFAULT_REFRESH_MS, cachePath, force: true });
+
+		expect(later.calls.sort()).toEqual(["tok-alice-SECRET", "tok-bob-SECRET"]);
+		expect(bob(rows)?.retryAt).toBeUndefined();
+	});
+
+	test("does not query an exhausted account before its real reset even when forced", async () => {
+		const cachePath = tempCache();
+		await collectShared(AUTH, { fetchImpl: exhaustedFetch(Date.parse("2026-10-12T00:00:00Z")), now: NOW, cachePath });
+		const later = fakeFetch();
+		await collectShared(AUTH, { fetchImpl: later.fetchImpl, now: NOW + DEFAULT_REFRESH_MS, cachePath, force: true });
+
+		expect(later.calls).toEqual(["tok-alice-SECRET"]);
+	});
+
+	test("does not permanently block an exhausted window with an unknown reset", async () => {
+		const cachePath = tempCache();
+		await collectShared(AUTH, { fetchImpl: exhaustedFetch(null), now: NOW, cachePath });
+		const later = fakeFetch();
+		await collectShared(AUTH, { fetchImpl: later.fetchImpl, now: NOW + DEFAULT_REFRESH_MS, cachePath, force: true });
+
+		expect(later.calls.sort()).toEqual(["tok-alice-SECRET", "tok-bob-SECRET"]);
+	});
+
+	test("queries an exhausted account again when its reset arrives", async () => {
+		const cachePath = tempCache();
+		const resetAt = NOW + 600_000;
+		await collectShared(AUTH, { fetchImpl: exhaustedFetch(resetAt), now: NOW, cachePath });
+		const later = fakeFetch();
+		await collectShared(AUTH, { fetchImpl: later.fetchImpl, now: resetAt, cachePath, force: true });
+
+		expect(later.calls.sort()).toEqual(["tok-alice-SECRET", "tok-bob-SECRET"]);
+	});
+
+	test("parses malformed cached dates and percentages before rendering", async () => {
+		const cachePath = tempCache();
+		await collectShared(AUTH, { fetchImpl: fakeFetch().fetchImpl, now: NOW, cachePath });
+		const raw = JSON.parse(readFileSync(cachePath, "utf8"));
+		const broken = raw.accounts["anthropic-subscription/bob"].row;
+		broken.retryAt = "not-a-time";
+		broken.fetchedAt = "not-a-time";
+		broken.windows[0].resetsAt = "not-a-time";
+		broken.windows[1].remainingPercent = null;
+		writeFileSync(cachePath, JSON.stringify(raw));
+
+		const entries = await readCache(cachePath);
+		const cached = bob([...entries.values()].map((entry) => entry.row));
+		expect(cached).toBeDefined();
+		if (!cached) throw new Error("bob cache entry missing");
+		expect(cached.retryAt).toBeUndefined();
+		expect(cached.fetchedAt).toBeUndefined();
+		expect(cached.windows).toHaveLength(1);
+		expect(cached.windows[0]?.resetsAt).toBeNull();
+		const text = renderFrame({ rows: [cached], updatedAt: NOW, refreshing: false, error: null, now: NOW }, 120).join("\n");
+		expect(text).not.toContain("NaN");
+		expect(text).not.toContain("Infinity");
 	});
 });
